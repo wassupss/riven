@@ -63,28 +63,52 @@ export interface CustomDesign {
   noFace: boolean
   /**
    * The faithful picture ("사진 충실 모드"), on species made since it came in:
-   * the photo itself at 32x32 in up to 16 colours, drawn one dot per css
-   * pixel with no face of its own. The 12x12 design above is still made and
+   * the photo itself at 32x32 (or 48x48, 64x64) in up to 16 colours, drawn
+   * in the pet's 32 css pixels with no face of its own. The 12x12 design above is still made and
    * kept beside it: the egg's coat, the battle family and build read it, and
    * an older riven that knows nothing of `photo` draws that instead.
    */
   photo?: PhotoArt
 }
 
-/** The faithful picture's grid: the 32 dots a pet is drawn at. */
+/** The faithful picture's default grid: the 32 dots a pet is drawn at. */
 export const PHOTO = 32
+/**
+ * The grids a picture can be made at. The pet is always drawn 32 css pixels
+ * square, so 48 is 2/3 of a css pixel a dot and 64 half of one (a device
+ * pixel each on a Retina screen): more detail in the same room.
+ */
+export const PHOTO_SIZES = [32, 48, 64] as const
+export type PhotoSize = (typeof PHOTO_SIZES)[number]
 export const PHOTO_MAX_COLORS = 16
 /** A dot of the picture: '.' is air, otherwise the index of its colour in `palette`. */
 export const PHOTO_CHARS = '0123456789abcdef'
-/** A picture with fewer dots than this is a speck. */
+/** A 32x32 picture with fewer dots than this is a speck (a bigger grid scales it by area). */
 export const MIN_PHOTO_CELLS = 60
 
 export interface PhotoArt {
   /** Up to 16 '#rrggbb' colours. */
   palette: string[]
-  /** PHOTO rows of PHOTO characters: '.' or a PHOTO_CHARS index into `palette`. */
+  /** `size` rows of `size` characters: '.' or a PHOTO_CHARS index into `palette`. */
   rows: string[]
+  /**
+   * The grid, 48 or 64. Left out at 32, which is what every picture made
+   * before the choice came in is, so their data reads and writes unchanged.
+   */
+  size?: PhotoSize
 }
+
+/** A picture's grid (32 when it does not say). */
+export const photoSizeOf = (p: PhotoArt): PhotoSize => p.size ?? PHOTO
+
+/** The fewest dots a picture of `size` may have: MIN_PHOTO_CELLS, by area. */
+export const minPhotoCells = (size: number): number => Math.round((MIN_PHOTO_CELLS * size * size) / (PHOTO * PHOTO))
+
+/**
+ * How many dots thick a picture's outline is drawn, and so how much air it
+ * keeps round itself: about a css pixel, never less than a dot.
+ */
+export const photoLine = (size: number): number => Math.max(1, Math.floor(size / PHOTO))
 
 export type CustomSpeciesId = `u-${string}`
 const ID_RE = /^u-[a-z0-9]{4,20}$/
@@ -117,16 +141,20 @@ export function sanitizePhoto(raw: unknown): PhotoArt | null {
     if (!HEX_RE.test(v)) return null
     palette.push(v)
   }
-  if (!Array.isArray(o.rows) || o.rows.length !== PHOTO) return null
+  // Only the grids a picture can be made at; none given is the 32 of old.
+  const size = o.size === undefined ? PHOTO : o.size
+  if (!(PHOTO_SIZES as readonly unknown[]).includes(size)) return null
+  const n = size as PhotoSize
+  if (!Array.isArray(o.rows) || o.rows.length !== n) return null
   const ok = '.' + PHOTO_CHARS.slice(0, palette.length)
   const rows: string[] = []
   for (const row of o.rows) {
-    if (typeof row !== 'string' || row.length !== PHOTO) return null
+    if (typeof row !== 'string' || row.length !== n) return null
     for (const ch of row) if (!ok.includes(ch)) return null
     rows.push(row)
   }
-  if (cellsOf(rows) < MIN_PHOTO_CELLS) return null
-  return { palette, rows }
+  if (cellsOf(rows) < minPhotoCells(n)) return null
+  return n === PHOTO ? { palette, rows } : { palette, rows, size: n }
 }
 
 /** A design read defensively: a hand-edited file or a forged code must never draw garbage. Null when unusable. */
@@ -177,7 +205,15 @@ export function designOf(s: CustomDesign): CustomDesign {
     art: [...s.art],
     face: { ...s.face },
     noFace: s.noFace,
-    ...(s.photo ? { photo: { palette: [...s.photo.palette], rows: [...s.photo.rows] } } : {})
+    ...(s.photo
+      ? {
+          photo: {
+            palette: [...s.photo.palette],
+            rows: [...s.photo.rows],
+            ...(s.photo.size && s.photo.size !== PHOTO ? { size: s.photo.size } : {})
+          }
+        }
+      : {})
   }
 }
 
@@ -193,10 +229,75 @@ export const sameDesign = (a: CustomDesign, b: CustomDesign): boolean =>
  * by '/', fx, fy, noFace], and for a faithful picture a seventh, [its colours
  * as one hex string, its rows as one string]. A riven from before pictures
  * reads the first six and draws the 12x12.
+ *
+ * The picture in a code is always 32x32, whatever it was made at: a 64x64
+ * one would make the code four times longer (4096 dots against 1024), and a
+ * code is something people paste into chat. The other side sees the same
+ * picture at the pet's own 32 dots, which every riven that reads pictures
+ * draws; the keeper's own file keeps the full size.
  */
 export function packDesign(d: CustomDesign): unknown[] {
   const base = [d.name, COLOR_KEYS.map((k) => d.colors[k].slice(1)).join(''), d.art.join('/'), d.face.x, d.face.y, d.noFace ? 1 : 0]
-  return d.photo ? [...base, [d.photo.palette.map((c) => c.slice(1)).join(''), d.photo.rows.join('')]] : base
+  const pic = d.photo ? photoAt32(d.photo) : null
+  return pic ? [...base, [pic.palette.map((c) => c.slice(1)).join(''), pic.rows.join('')]] : base
+}
+
+/**
+ * A picture brought down to 32x32 (the battle code's copy): each new dot
+ * covers its share of the old ones and is lit where at least half of that is
+ * lit, in the palette colour nearest (in Lab) to the area-weighted mean
+ * there. The palette is kept as it is. A 32 picture is returned as it is;
+ * null when too little is left to be a picture.
+ */
+export function photoAt32(p: PhotoArt): PhotoArt | null {
+  const n = photoSizeOf(p)
+  if (n === PHOTO) return p
+  const k = n / PHOTO
+  const rgbs = p.palette.map(hexToRgb)
+  const labs = rgbs.map((c) => labOf(c[0], c[1], c[2]))
+  const rows: string[] = []
+  for (let j = 0; j < PHOTO; j++) {
+    let row = ''
+    for (let i = 0; i < PHOTO; i++) {
+      const fx0 = i * k
+      const fx1 = fx0 + k
+      const fy0 = j * k
+      const fy1 = fy0 + k
+      let area = 0
+      let r = 0
+      let g = 0
+      let b = 0
+      for (let y = Math.floor(fy0); y < Math.ceil(fy1); y++)
+        for (let x = Math.floor(fx0); x < Math.ceil(fx1); x++) {
+          const ch = p.rows[y]?.[x]
+          if (!ch || ch === '.') continue
+          const a = (Math.min(x + 1, fx1) - Math.max(x, fx0)) * (Math.min(y + 1, fy1) - Math.max(y, fy0))
+          if (a <= 0) continue
+          const c = rgbs[PHOTO_CHARS.indexOf(ch)]
+          area += a
+          r += c[0] * a
+          g += c[1] * a
+          b += c[2] * a
+        }
+      if (area < k * k * 0.5) {
+        row += '.'
+        continue
+      }
+      const lab = labOf(r / area, g / area, b / area)
+      let best = 0
+      let bestD = Infinity
+      labs.forEach((l, ci) => {
+        const d = (l[0] - lab[0]) ** 2 + (l[1] - lab[1]) ** 2 + (l[2] - lab[2]) ** 2
+        if (d < bestD) {
+          bestD = d
+          best = ci
+        }
+      })
+      row += PHOTO_CHARS[best]
+    }
+    rows.push(row)
+  }
+  return sanitizePhoto({ palette: p.palette, rows })
 }
 
 function unpackPhoto(raw: unknown): PhotoArt | undefined {

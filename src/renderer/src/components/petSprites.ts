@@ -18,7 +18,7 @@ import { customBodies, customCoat, photoGrid } from './petCustomArt'
 //   .  empty        o  outline        b  body         s  shade (limbs)
 //   h  highlight    w  shell/white    e  eye          m  mouth      a  accent
 //   p  prop (droppings, the medicine cross, the game's arrows)
-//   A..P  the colours of a species' faithful picture (see photoPixels)
+//   A..P  the colours of a species' faithful picture (see photoParts)
 // ---------------------------------------------------------------------------
 
 /** The authored grids: 16×16, one character per dot, easy to read as text. */
@@ -2027,33 +2027,127 @@ export function pixelsOf(
 }
 
 /**
- * A species' faithful picture (CustomDesign.photo) as lit dots: the stage's
- * picture already at the drawn size (petCustomArt photoGrid, cached), with no
- * face; its mood shows in how it moves (pet.css, .pet-pm). A grown-up's form
- * and branch still show: a titan is wider, a wraith fades out at the hem,
- * and the branch marks and a radiant one's stars go in the air around it.
+ * A species' faithful picture (CustomDesign.photo) as lit dots on the 32
+ * grid, what the rest of the pet code reads (where a hat fits, what a test
+ * counts): the picture brought down to 32 (photoDrawing's `coarse`) with its
+ * marks. What is drawn is photoDrawing's `picture`, at its own size.
  */
 function photoPixels(d: CustomDesign, stage: Exclude<Stage, 'egg'>, form: Form, branch?: BranchId | null): Dot[] {
+  const { coarse, marks } = photoParts(d, stage, form, branch)
+  return [...coarse, ...marks]
+}
+
+/** A faithful picture as drawn: see photoDrawing. */
+export interface PhotoDrawing {
+  /** The picture's grid (32, 48 or 64): `picture` is on it. */
+  size: number
+  /** The picture, outline and shell, one dot per grid dot. */
+  picture: Dot[]
+  /** The branch marks and a radiant one's stars, on the 32 grid. */
+  marks: Dot[]
+}
+
+/**
+ * The stage's picture (petCustomArt photoGrid, cached) with no face; its mood
+ * shows in how it moves (pet.css, .pet-pm). A grown-up's form and branch
+ * still show: a titan is wider, a wraith fades out at the hem (both on the
+ * picture's own grid, by about the same css pixels at any size), and the
+ * branch marks and a radiant one's stars go in the air around it on the 32
+ * grid, as on every pet, where they have room for their shapes.
+ */
+function photoParts(
+  d: CustomDesign,
+  stage: Exclude<Stage, 'egg'>,
+  form: Form,
+  branch?: BranchId | null
+): PhotoDrawing & { coarse: Dot[] } {
   const fine: Grid = photoGrid(d, stage).map((r) => [...r])
+  const n = fine.length
   if (stage === 'adult') {
     if (form === 'titan') widen(fine)
     else if (form === 'wraith') fadeHem(fine)
-    if (branch) branchMarks(fine, branch)
-    if (form === 'radiant' && (BRANCH_BY_ID.get(branch ?? '')?.tier ?? 0) < 3) sparkle(fine)
   }
-  const dots: Dot[] = []
-  fine.forEach((row, y) =>
-    row.forEach((ch, x) => {
-      if (ch !== '.') dots.push({ x, y, ch })
-    })
-  )
-  return dots
+  const coarseGrid = n === SPRITE_SIZE ? fine : toSprite(fine)
+  const marked = coarseGrid.map((r) => [...r])
+  if (stage === 'adult') {
+    if (branch) branchMarks(marked, branch)
+    if (form === 'radiant' && (BRANCH_BY_ID.get(branch ?? '')?.tier ?? 0) < 3) sparkle(marked)
+  }
+  const dotsOf = (g: Grid, keep: (x: number, y: number, ch: string) => boolean): Dot[] => {
+    const dots: Dot[] = []
+    g.forEach((row, y) =>
+      row.forEach((ch, x) => {
+        if (ch !== '.' && keep(x, y, ch)) dots.push({ x, y, ch })
+      })
+    )
+    return dots
+  }
+  const all = (): boolean => true
+  return {
+    size: n,
+    picture: dotsOf(fine, all),
+    coarse: dotsOf(coarseGrid, all),
+    // Marks only ever paint air, so a mark is a dot the picture left empty.
+    marks: dotsOf(marked, (x, y) => coarseGrid[y][x] === '.')
+  }
 }
 
-/** Titan, on a picture: two dots wider each side, the middle column repeated (as fatten does on the authored grid). */
+/**
+ * A faithful picture as the pet draws it (see Creature): the picture on its
+ * own grid, and the marks around it on the 32 grid. Null for anything else.
+ */
+export function photoDrawing(stage: Stage, form: Form, species: Species, branch?: BranchId | null): PhotoDrawing | null {
+  if (stage === 'egg' || !isCustomId(species)) return null
+  const d = customOf(species)
+  if (!d?.photo) return null
+  const { size, picture, marks } = photoParts(d, stage, form, branch)
+  return { size, picture, marks }
+}
+
+/**
+ * A picture on a bigger grid (48, 64) brought onto the 32 one, for what reads
+ * the pet's dots rather than drawing them: a dot is lit where any of the
+ * picture is under it (so marks and keepsakes never land on the picture), in
+ * the character that covers most of it.
+ */
+function toSprite(fine: Grid): Grid {
+  const k = fine.length / SPRITE_SIZE
+  const out: Grid = Array.from({ length: SPRITE_SIZE }, () => Array(SPRITE_SIZE).fill('.'))
+  for (let j = 0; j < SPRITE_SIZE; j++)
+    for (let i = 0; i < SPRITE_SIZE; i++) {
+      const x0 = i * k
+      const x1 = x0 + k
+      const y0 = j * k
+      const y1 = y0 + k
+      const area = new Map<string, number>()
+      for (let y = Math.floor(y0); y < Math.ceil(y1); y++)
+        for (let x = Math.floor(x0); x < Math.ceil(x1); x++) {
+          const ch = fine[y]?.[x]
+          if (!ch || ch === '.') continue
+          const a = (Math.min(x + 1, x1) - Math.max(x, x0)) * (Math.min(y + 1, y1) - Math.max(y, y0))
+          if (a > 0) area.set(ch, (area.get(ch) ?? 0) + a)
+        }
+      let best = '.'
+      let most = 0
+      for (const [ch, a] of area)
+        if (a > most) {
+          most = a
+          best = ch
+        }
+      out[j][i] = best
+    }
+  return out
+}
+
+/**
+ * Titan, on a picture: about two css pixels wider each side, the middle
+ * column repeated (as fatten does on the authored grid).
+ */
 function widen(g: Grid): void {
-  for (let pass = 0; pass < 2; pass++) {
-    let x0 = SPRITE_SIZE
+  const n = g.length
+  const passes = Math.round((2 * n) / SPRITE_SIZE)
+  for (let pass = 0; pass < passes; pass++) {
+    let x0 = n
     let x1 = -1
     g.forEach((row) =>
       row.forEach((ch, x) => {
@@ -2065,7 +2159,7 @@ function widen(g: Grid): void {
     if (x1 < 0) return
     const cx = Math.floor((x0 + x1) / 2)
     const left = x0 > 0
-    const right = x1 < SPRITE_SIZE - 1
+    const right = x1 < n - 1
     if (!left && !right) return
     for (const row of g) {
       const old = [...row]
@@ -2077,16 +2171,21 @@ function widen(g: Grid): void {
   }
 }
 
-/** Wraith, on a picture: its bottom rows thin out to nothing, a dot at a time. */
+/**
+ * Wraith, on a picture: its bottom rows (about three css pixels of them)
+ * thin out to nothing, a dot at a time.
+ */
 function fadeHem(g: Grid): void {
+  const k = g.length / SPRITE_SIZE
   let hem = -1
   g.forEach((row, y) => {
     if (row.some((c) => c !== '.')) hem = y
   })
-  for (let k = 0; k < 3 && hem - k >= 0; k++) {
-    const y = hem - k
-    // Every other dot on the last row, every third above it, every fourth above that.
-    const every = k + 2
+  const rows = Math.round(3 * k)
+  for (let r = 0; r < rows && hem - r >= 0; r++) {
+    const y = hem - r
+    // Every other dot on the last row(s), every third above, every fourth above that.
+    const every = 2 + Math.floor(r / k)
     g[y].forEach((ch, x) => {
       if (ch !== '.' && (x + y) % every === 0) g[y][x] = '.'
     })
@@ -2096,6 +2195,16 @@ function fadeHem(g: Grid): void {
 /** A row of same-coloured dots, drawn as one rect. */
 export interface Run extends Dot {
   w: number
+}
+
+/**
+ * Runs as one svg path per colour: `M x y h w v 1 h -w z` for each, in whole
+ * units of the grid they are on, so nothing lands between two dots.
+ */
+export function runPaths(runs: Run[]): Array<{ ch: string; d: string }> {
+  const by = new Map<string, string>()
+  for (const r of runs) by.set(r.ch, `${by.get(r.ch) ?? ''}M${r.x} ${r.y}h${r.w}v1h${-r.w}z`)
+  return [...by].map(([ch, d]) => ({ ch, d }))
 }
 
 /** Dots merged into horizontal runs: a third as many rects to draw. */

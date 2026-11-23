@@ -1,15 +1,17 @@
 import { tidy } from '../components/petCustomArt'
 import {
   ART,
-  MIN_PHOTO_CELLS,
   PHOTO,
   PHOTO_CHARS,
   PHOTO_MAX_COLORS,
   labOf,
+  minPhotoCells,
+  photoLine,
   rgbToHex,
   type CustomColors,
   type CustomDesign,
   type PhotoArt,
+  type PhotoSize,
   type Role
 } from '../state/petSpecies'
 
@@ -498,12 +500,14 @@ export function designFromPhoto(img: Rgba, fg: Uint8Array, name: string): Custom
 
 // ---- the faithful picture ----
 //
-// "사진 충실 모드": the subject at the pet's own 32 dots, in up to 16 of the
-// photo's colours, so it looks like the photo rather than like a pet in the
+// "사진 충실 모드": the subject at the pet's own 32 dots (or 48, 64 for more
+// detail in the same room), in up to 16 of the photo's colours, so it looks like the photo rather than like a pet in the
 // photo's colours. Same crop, same cut-out, same Lab as the 12x12 above.
 
-/** The picture's room: a dot of air on each side for the outline the pet is drawn with. */
-export const PHOTO_FIT = PHOTO - 2
+/** The picture's room on a grid of `size`: air on each side for the outline the pet is drawn with. */
+export const photoFit = (size: number): number => size - 2 * photoLine(size)
+/** The room of a 32x32 picture: a dot of air on each side. */
+export const PHOTO_FIT = photoFit(PHOTO)
 
 /**
  * Up to `k` colours for `n` Lab points (`labs`, n*3): median cut (the box
@@ -598,14 +602,22 @@ export function quantizeLab(labs: Float32Array, k: number, rounds = 6): { center
 }
 
 /**
- * The subject at the picture's 32 dots: fitted to its own bounding box
- * (square, so it keeps its proportions) inside the PHOTO_FIT room, centred
+ * The subject at the picture's `size` dots (32, 48 or 64): fitted to its own
+ * bounding box (square, so it keeps its proportions) inside the photoFit room, centred
  * across and standing on the bottom of it. A dot is lit where at least half
  * of the area it covers is subject, and takes the mean colour of that
  * subject; the dots' colours are then reduced to `colors` in Lab. One piece
  * (corners count), no holes. Null when too little is left.
  */
-export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_MAX_COLORS): PhotoArt | null {
+export function photoArtOf(
+  img: Rgba,
+  fg: Uint8Array,
+  colors = PHOTO_MAX_COLORS,
+  size: PhotoSize = PHOTO
+): PhotoArt | null {
+  const N = size
+  const fit = photoFit(N)
+  const pad = photoLine(N)
   const w = img.width
   const h = img.height
   const mask = largestPart(fg, w)
@@ -626,14 +638,14 @@ export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_MAX_COLORS)
   }
   if (count < 16) return null
   const side = Math.max(x1 - x0 + 1, y1 - y0 + 1)
-  const cell = side / PHOTO_FIT
+  const cell = side / fit
   const ox = x0 - (side - (x1 - x0 + 1)) / 2
   const oy = y1 + 1 - side
-  // The lit dots (as indices on the 32 grid) and their colours.
+  // The lit dots (as indices on the N grid) and their colours.
   const lit: number[] = []
   const rgb: number[] = []
-  for (let j = 0; j < PHOTO_FIT; j++)
-    for (let i = 0; i < PHOTO_FIT; i++) {
+  for (let j = 0; j < fit; j++)
+    for (let i = 0; i < fit; i++) {
       const fx0 = ox + i * cell
       const fx1 = fx0 + cell
       const fy0 = oy + j * cell
@@ -656,10 +668,10 @@ export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_MAX_COLORS)
       // Lit where at least half of it is subject. Its colour is the mean: a
       // darker-detail bias was tried and turned a zebra's stripes to black.
       if (area < cell * cell * 0.5) continue
-      lit.push((j + 1) * PHOTO + i + 1)
+      lit.push((j + pad) * N + i + pad)
       rgb.push(r / area, g / area, b / area)
     }
-  if (lit.length < MIN_PHOTO_CELLS) return null
+  if (lit.length < minPhotoCells(N)) return null
   const labs = new Float32Array(lit.length * 3)
   lit.forEach((_, n) => labs.set(labOf(rgb[n * 3], rgb[n * 3 + 1], rgb[n * 3 + 2]), n * 3))
   const k = Math.max(2, Math.min(PHOTO_MAX_COLORS, Math.round(colors)))
@@ -673,8 +685,8 @@ export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_MAX_COLORS)
     c[2] += rgb[n * 3 + 2]
     c[3]++
   })
-  const grid: string[][] = Array.from({ length: PHOTO }, () => Array(PHOTO).fill('.'))
-  lit.forEach((p, n) => (grid[Math.floor(p / PHOTO)][p % PHOTO] = PHOTO_CHARS[assign[n]]))
+  const grid: string[][] = Array.from({ length: N }, () => Array(N).fill('.'))
+  lit.forEach((p, n) => (grid[Math.floor(p / N)][p % N] = PHOTO_CHARS[assign[n]]))
   tidy(grid, true)
   return finishPhoto(
     grid,
@@ -685,7 +697,8 @@ export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_MAX_COLORS)
 /**
  * A picture made ready to keep: colours no dot uses are dropped and the rest
  * numbered most used first, so the same picture is always the same data.
- * Null when it is too small to be an animal.
+ * Its size is the grid's (32, 48 or 64). Null when it is too small to be an
+ * animal.
  */
 export function finishPhoto(grid: string[][], palette: string[]): PhotoArt | null {
   const used = palette.map(() => 0)
@@ -699,8 +712,11 @@ export function finishPhoto(grid: string[][], palette: string[]): PhotoArt | nul
   const rows = grid.map((row) => row.map((ch) => (ch === '.' ? '.' : remap[ch])).join(''))
   let cells = 0
   for (const row of rows) for (const ch of row) if (ch !== '.') cells++
-  if (cells < MIN_PHOTO_CELLS) return null
-  return { palette: order.map((i) => palette[i]), rows }
+  const size = rows.length
+  if (cells < minPhotoCells(size)) return null
+  const out = { palette: order.map((i) => palette[i]), rows }
+  // A 32 says nothing of its size, as every picture from before the choice.
+  return size === PHOTO ? out : { ...out, size: size as PhotoSize }
 }
 
 /**
@@ -711,10 +727,11 @@ export function faithfulDesignFromPhoto(
   img: Rgba,
   fg: Uint8Array,
   name: string,
-  colors = PHOTO_MAX_COLORS
+  colors = PHOTO_MAX_COLORS,
+  size: PhotoSize = PHOTO
 ): CustomDesign | null {
   const base = designFromPhoto(img, fg, name)
-  const photo = photoArtOf(img, fg, colors)
+  const photo = photoArtOf(img, fg, colors, size)
   if (!base || !photo) return null
   return { ...base, noFace: true, photo }
 }

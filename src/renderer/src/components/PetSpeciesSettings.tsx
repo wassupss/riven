@@ -12,6 +12,7 @@ import {
   PHOTO,
   PHOTO_CHARS,
   PHOTO_MAX_COLORS,
+  PHOTO_SIZES,
   ROLE_COLOR,
   buildOfDesign,
   cellsOf,
@@ -20,11 +21,13 @@ import {
   hexToRgb,
   newCustomId,
   noteDesign,
+  photoSizeOf,
   sanitizeDesign,
   useCustomSpecies,
   type CustomDesign,
   type CustomSpecies,
   type PhotoArt,
+  type PhotoSize,
   type Role
 } from '../state/petSpecies'
 import {
@@ -46,7 +49,7 @@ import {
 // pixels, petCustomArt.ts the bodies). Everything runs here, on this machine:
 // the photo is read from the file the user picks and goes no further than a
 // canvas; only the design is saved (userData/store/pet-species.json): the
-// 32x32 faithful picture and the 12x12 made beside it. A species made before
+// faithful picture (32x32, 48x48 or 64x64) and the 12x12 made beside it. A species made before
 // the faithful picture is still edited as its 12x12.
 // ---------------------------------------------------------------------------
 
@@ -98,23 +101,24 @@ function draw(canvas: HTMLCanvasElement | null, img: Rgba, fg?: Uint8Array): voi
 /** The faithful picture's colour choices: fewer reads flatter, more reads closer. */
 const COLOR_COUNTS = [8, 12, 16]
 
-/** A faithful picture on a 32x32 canvas (scaled up, pixelated, by CSS). */
+/** A faithful picture on a canvas of its own grid (scaled up, pixelated, by CSS). */
 function PhotoCanvas({
   photo,
   className,
   ...rest
 }: { photo: PhotoArt; className: string } & HTMLAttributes<HTMLCanvasElement>): JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null)
+  const n = photoSizeOf(photo)
   useEffect(() => {
     const ctx = ref.current?.getContext('2d')
     if (!ctx) return
-    const img = ctx.createImageData(PHOTO, PHOTO)
+    const img = ctx.createImageData(n, n)
     const rgb = photo.palette.map(hexToRgb)
     photo.rows.forEach((row, y) =>
       [...row].forEach((ch, x) => {
         if (ch === '.') return
         const c = rgb[PHOTO_CHARS.indexOf(ch)]
-        const o = (y * PHOTO + x) * 4
+        const o = (y * n + x) * 4
         img.data[o] = c[0]
         img.data[o + 1] = c[1]
         img.data[o + 2] = c[2]
@@ -122,8 +126,8 @@ function PhotoCanvas({
       })
     )
     ctx.putImageData(img, 0, 0)
-  }, [photo])
-  return <canvas ref={ref} width={PHOTO} height={PHOTO} className={`pm-canvas pm-square pm-pixels ${className}`} {...rest} />
+  }, [photo, n])
+  return <canvas ref={ref} width={n} height={n} className={`pm-canvas pm-square pm-pixels ${className}`} {...rest} />
 }
 
 /** A pet of the design, as a small picture. */
@@ -154,6 +158,8 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   const [draft, setDraft] = useState<CustomDesign | null>(editing ? sanitizeDesign(editing) : null)
   const [tool, setTool] = useState<Tool>(editing?.photo ? 0 : 'b')
   const [colorCount, setColorCount] = useState<number>(PHOTO_MAX_COLORS)
+  // The picture's grid: more dots, more detail in the same 32 css pixels.
+  const [res, setRes] = useState<PhotoSize>(editing?.photo ? photoSizeOf(editing.photo) : PHOTO)
   const fileRef = useRef<HTMLInputElement>(null)
   const photoRef = useRef<HTMLCanvasElement>(null)
   const cutRef = useRef<HTMLCanvasElement>(null)
@@ -168,8 +174,8 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   )
   // What the cut-out would make, shown live beside it.
   const live = useMemo(
-    () => (sq && fg && step === 'cutout' ? photoArtOf(sq, fg, colorCount) : null),
-    [sq, fg, step, colorCount]
+    () => (sq && fg && step === 'cutout' ? photoArtOf(sq, fg, colorCount, res) : null),
+    [sq, fg, step, colorCount, res]
   )
 
   useEffect(() => {
@@ -255,8 +261,8 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   }
   // On a faithful picture the brush is one of its colours, or the eraser.
   const applyPhotoTool = (e: ReactPointerEvent<HTMLElement>): void => {
-    const c = cellAt(e, PHOTO)
     const photo = draft?.photo
+    const c = photo ? cellAt(e, photoSizeOf(photo)) : null
     if (!c || !draft || !photo) return
     const ch = typeof tool === 'number' ? (PHOTO_CHARS[tool] ?? '.') : '.'
     if (photo.rows[c.y][c.x] === ch) return
@@ -278,9 +284,9 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   }
 
   // New species are faithful pictures (with their 12x12 made beside them).
-  const toDots = (count = colorCount): void => {
+  const toDots = (count = colorCount, size = res): void => {
     if (!sq || !fg) return
-    const d = faithfulDesignFromPhoto(sq, fg, draft?.name ?? '', count)
+    const d = faithfulDesignFromPhoto(sq, fg, draft?.name ?? '', count, size)
     if (!d) return setError(t('pet.maker.nothingLeft'))
     setError(null)
     setDraft({ ...d, name: draft?.name ?? '' })
@@ -476,6 +482,20 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
                 />
               </div>
             )}
+            {source && (
+              <div className="pm-field" title={t('pet.maker.resolutionDesc')}>
+                <span>{t('pet.maker.resolution')}</span>
+                <Segmented<string>
+                  value={String(res)}
+                  onChange={(v) => {
+                    const size = Number(v) as PhotoSize
+                    setRes(size)
+                    toDots(colorCount, size)
+                  }}
+                  options={PHOTO_SIZES.map((n) => ({ value: String(n), label: `${n}` }))}
+                />
+              </div>
+            )}
             <div className="pm-field">
               <span>{t('pet.maker.colors')}</span>
               <div className="pm-tools pm-wrap">
@@ -511,7 +531,7 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
                 options={[{ value: 'erase', label: t('pet.maker.role.erase') }]}
               />
             </div>
-            <p className="set-note">{t('pet.maker.photoHint')}</p>
+            <p className="set-note">{t('pet.maker.photoHint', { n: photoSizeOf(draft.photo) })}</p>
             {family && (
               <p className="set-note">
                 {t('pet.maker.family', { family: t(`pet.maker.family.${family}`) })} ·{' '}

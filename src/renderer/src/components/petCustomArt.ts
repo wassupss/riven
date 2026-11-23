@@ -1,4 +1,15 @@
-import { ART, ART_AT, PHOTO, PHOTO_CHARS, hexToRgb, labOf, type CustomDesign, type PhotoArt } from '../state/petSpecies'
+import {
+  ART,
+  ART_AT,
+  PHOTO,
+  PHOTO_CHARS,
+  hexToRgb,
+  labOf,
+  photoLine,
+  photoSizeOf,
+  type CustomDesign,
+  type PhotoArt
+} from '../state/petSpecies'
 import type { Sprite } from './petSprites'
 
 // ---------------------------------------------------------------------------
@@ -284,11 +295,11 @@ export function customBodies(d: CustomDesign): CustomBodies {
 }
 
 // ---------------------------------------------------------------------------
-// The faithful picture (CustomDesign.photo): drawn as it is, at the drawn
-// size (32 dots, one per css pixel), with a 1-dot outline and no face. The
-// younger stages are the same picture made smaller, resampled from the
-// grown-up's dots. Everything here is cached per design and stage, so a
-// frame never redoes it.
+// The faithful picture (CustomDesign.photo): drawn as it is, on its own grid
+// (32, 48 or 64 dots across the pet's 32 css pixels), with an outline of
+// about a css pixel and no face. The younger stages are the same picture made
+// smaller, resampled from the grown-up's dots. Everything here is cached per
+// design and stage, so a frame never redoes it.
 // ---------------------------------------------------------------------------
 
 /** The drawn characters of the picture's colours: palette index i is PHOTO_DOT[i]. Never a palette letter. */
@@ -296,9 +307,9 @@ export const PHOTO_DOT = 'ABCDEFGHIJKLMNOP'
 
 export type PhotoStage = 'hatchling' | 'child' | 'teen' | 'adult'
 /**
- * Each stage's size next to the grown-up and the drawn row its feet stand
- * on. The hatchling sits in its broken shell (drawn rows 22..25), as the
- * built-in hatchlings do.
+ * Each stage's size next to the grown-up and the row its feet stand on, on
+ * the 32 grid (a bigger grid scales the row). The hatchling sits in its
+ * broken shell (drawn rows 22..25), as the built-in hatchlings do.
  */
 export const PHOTO_STAGES: Record<PhotoStage, { scale: number; bottom: number }> = {
   hatchling: { scale: 0.5, bottom: 22 },
@@ -314,7 +325,7 @@ export const PHOTO_STAGES: Record<PhotoStage, { scale: number; bottom: number }>
  * colour there. Corners count as touching, so a thin tail is not cut off.
  */
 export function scalePhoto(p: PhotoArt, scale: number): string[][] {
-  const b = boxOf(p.rows, PHOTO)
+  const b = boxOf(p.rows, photoSizeOf(p))
   const crop = (): string[][] => p.rows.slice(b.y0, b.y0 + b.h).map((r) => [...r.slice(b.x0, b.x0 + b.w)])
   if (scale >= 1) return crop()
   const tw = Math.max(3, Math.round(b.w * scale))
@@ -361,24 +372,29 @@ export function scalePhoto(p: PhotoArt, scale: number): string[][] {
   return out
 }
 
-/** The broken shell a hatchling sits in, at the drawn size (the built-in one, doubled). */
-const SHELL: Array<[number, string]> = (() => {
-  const top = [...'.....w.ww.w.....'].map((c) => c + c).join('')
-  const bottom = [...'....wwwwwwww....'].map((c) => c + c).join('')
-  return [
-    [22, top],
-    [23, top],
-    [24, bottom],
-    [25, bottom]
-  ]
-})()
+/**
+ * The broken shell a hatchling sits in, on a picture's grid of `n` (the
+ * built-in one, its 16 dots each made n/16 square: 2 at 32, 3 at 48, 4 at 64).
+ */
+function shellOf(n: number): Array<[number, string]> {
+  const k = n / 16
+  const wide = (row: string): string => [...row].map((c) => c.repeat(k)).join('')
+  const out: Array<[number, string]> = []
+  for (const [y, row] of [
+    [11, '.....w.ww.w.....'],
+    [12, '....wwwwwwww....']
+  ] as const)
+    for (let d = 0; d < k; d++) out.push([y * k + d, wide(row)])
+  return out
+}
 
 const photoCache = new WeakMap<CustomDesign, Partial<Record<PhotoStage, string[]>>>()
 
 /**
- * A stage of the picture on the 32-dot drawn grid: the colours as PHOTO_DOT
- * characters, 'o' its outline, 'w' the hatchling's shell. Cached; the rows
- * are shared, so a caller that changes them copies them first.
+ * A stage of the picture on its own grid (photoSizeOf: 32, 48 or 64 square):
+ * the colours as PHOTO_DOT characters, 'o' its outline, 'w' the hatchling's
+ * shell. Cached; the rows are shared, so a caller that changes them copies
+ * them first.
  */
 export function photoGrid(d: CustomDesign, stage: PhotoStage): string[] {
   const p = d.photo
@@ -386,8 +402,11 @@ export function photoGrid(d: CustomDesign, stage: PhotoStage): string[] {
   const per = photoCache.get(d) ?? {}
   const hit = per[stage]
   if (hit) return hit
-  const { scale, bottom } = PHOTO_STAGES[stage]
-  const g: string[][] = Array.from({ length: PHOTO }, () => Array(PHOTO).fill('.'))
+  const n = photoSizeOf(p)
+  const { scale, bottom: bottom32 } = PHOTO_STAGES[stage]
+  // The row its feet stand on, where that row of the 32 grid ends.
+  const bottom = Math.floor(((bottom32 + 1) * n) / PHOTO) - 1
+  const g: string[][] = Array.from({ length: n }, () => Array(n).fill('.'))
   const put = (small: string[][], offX: number, offY: number): void =>
     small.forEach((row, y) =>
       row.forEach((ch, x) => {
@@ -404,15 +423,18 @@ export function photoGrid(d: CustomDesign, stage: PhotoStage): string[] {
   } else {
     const small = scalePhoto(p, scale)
     const tw = small[0]?.length ?? 0
-    put(small, Math.round((PHOTO - tw) / 2), bottom - small.length + 1)
+    put(small, Math.round((n - tw) / 2), bottom - small.length + 1)
   }
-  // The outline, four-connected so its corners come out round.
-  const before = g.map((r) => [...r])
-  for (let y = 0; y < PHOTO; y++)
-    for (let x = 0; x < PHOTO; x++)
-      if (before[y][x] === '.' && N4.some(([dx, dy]) => (before[y + dy]?.[x + dx] ?? '.') !== '.')) g[y][x] = 'o'
+  // The outline, about a css pixel thick (photoLine dots), grown a dot at a
+  // time four-connected so its corners come out round.
+  for (let pass = photoLine(n); pass > 0; pass--) {
+    const before = g.map((r) => [...r])
+    for (let y = 0; y < n; y++)
+      for (let x = 0; x < n; x++)
+        if (before[y][x] === '.' && N4.some(([dx, dy]) => (before[y + dy]?.[x + dx] ?? '.') !== '.')) g[y][x] = 'o'
+  }
   if (stage === 'hatchling')
-    for (const [y, row] of SHELL) [...row].forEach((ch, x) => ch !== '.' && (g[y][x] = ch))
+    for (const [y, row] of shellOf(n)) [...row].forEach((ch, x) => ch !== '.' && (g[y][x] = ch))
   const rows = g.map((r) => r.join(''))
   per[stage] = rows
   photoCache.set(d, per)
@@ -422,17 +444,19 @@ export function photoGrid(d: CustomDesign, stage: PhotoStage): string[] {
 /**
  * The 16x16 body a stage of the picture stands for: what the rest of the pet
  * code reads a body for (where a hat or a collar goes, how big it is), never
- * drawn itself. A dot is body where most of its four drawn dots are; the face
- * window, which only anchors what it wears, is put where its head is.
+ * drawn itself. A dot is body where at least half of the picture's dots under
+ * it are (2x2 of them at 32, 4x4 at 64); the face window, which only anchors
+ * what it wears, is put where its head is.
  */
 function photoBody(drawn: string[]): Sprite {
   const g = blank()
+  const k = drawn.length / G
   for (let y = 0; y < G; y++)
     for (let x = 0; x < G; x++) {
       let n = 0
-      for (let dy = 0; dy < 2; dy++)
-        for (let dx = 0; dx < 2; dx++) if (PHOTO_DOT.includes(drawn[2 * y + dy][2 * x + dx])) n++
-      if (n >= 2) g[y][x] = 'b'
+      for (let dy = 0; dy < k; dy++)
+        for (let dx = 0; dx < k; dx++) if (PHOTO_DOT.includes(drawn[k * y + dy][k * x + dx])) n++
+      if (n * 2 >= k * k) g[y][x] = 'b'
     }
   const rows = g.map((r) => r.join(''))
   const b = boxOf(rows, G)

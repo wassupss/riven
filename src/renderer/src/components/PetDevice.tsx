@@ -44,9 +44,12 @@ import {
   POOP,
   ZZZ,
   outfitPixels,
+  photoDrawing,
   pixelsOf,
+  runPaths,
   runsOf,
-  SPRITE_SIZE
+  SPRITE_SIZE,
+  type Run
 } from './petSprites'
 import {
   awardsOf,
@@ -285,12 +288,19 @@ export function Creature({
   // id (edited in settings), so the memos below are keyed on it too.
   useCustomSpecies((s) => s.rev)
   const design = isCustomId(species) ? customOf(species) : null
+  // A faithful picture is drawn on its own grid (32, 48 or 64 dots across
+  // the same 32 css pixels); only its marks go on the shared 32 grid below.
+  const photo = useMemo(
+    () => (design?.photo ? photoDrawing(stage, form, species, branch) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stage, form, species, branch, design]
+  )
   // Same-coloured neighbours in a row share one rect: the drawn grid is four
   // times the dots, and this keeps the rect count near what it was.
   const runs = useMemo(
-    () => runsOf(pixelsOf(stage, form, mood, species, branch)),
+    () => runsOf(photo ? photo.marks : pixelsOf(stage, form, mood, species, branch)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stage, form, mood, species, branch, design]
+    [stage, form, mood, species, branch, design, photo]
   )
   const br = branch ? BRANCH_BY_ID.get(branch) : undefined
   const wearingKey = wearing?.join(',')
@@ -318,17 +328,38 @@ export function Creature({
   }, [runs, outfit])
   // A faithful picture has many more runs (its 16 colours break rows up), so
   // its runs are drawn as one <path> per colour instead: a dozen or so nodes
-  // instead of several hundred rects. Whole-dot rectangles, so crispEdges
-  // draws them exactly as the rects would be.
+  // instead of several hundred (or, at 64, a couple of thousand) rects.
+  // Whole-dot rectangles in whole grid units, so crispEdges draws them
+  // exactly as the rects would be.
   const asPaths = !!design?.photo
+  const pathsOf = (list: Run[]): JSX.Element[] =>
+    runPaths(list).map(({ ch, d }) => <path key={ch} className={`pet-px pet-px-${ch}`} d={d} />)
+  // The picture itself, in a nested svg whose viewBox is its own grid scaled
+  // to the 32 of the plate: every coordinate stays a whole dot of its grid
+  // (no 0.5 or 0.667 in the paths), and neighbouring colours share exact
+  // edges, so there are no seams between them. At 64 a dot is half a css
+  // pixel, one device pixel on a Retina screen. Made once per stage and form.
+  const picture = useMemo(
+    () =>
+      photo ? (
+        <svg
+          key="picture"
+          x="0"
+          y="0"
+          width={SPRITE_SIZE}
+          height={SPRITE_SIZE}
+          viewBox={`0 0 ${photo.size} ${photo.size}`}
+          shapeRendering="crispEdges"
+        >
+          {pathsOf(runsOf(photo.picture))}
+        </svg>
+      ) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [photo]
+  )
   const dots = (list: typeof runs): JSX.Element[] =>
     asPaths
-      ? Object.entries(
-          list.reduce<Record<string, string>>((by, d) => {
-            by[d.ch] = `${by[d.ch] ?? ''}M${d.x} ${d.y}h${d.w}v1h${-d.w}z`
-            return by
-          }, {})
-        ).map(([ch, d]) => <path key={ch} className={`pet-px pet-px-${ch}`} d={d} />)
+      ? pathsOf(list)
       : list.map((d) => (
           <rect
             key={`${d.x},${d.y}`}
@@ -381,7 +412,7 @@ export function Creature({
         {layers.auraStill.length > 0 && plate(dots(layers.auraStill))}
         {twinkle(dots(layers.auraLitA))}
         {twinkle(dots(layers.auraLitB), true)}
-        {plate(dots(layers.bodyStill), 'pet-body')}
+        {plate(picture ? [picture, ...dots(layers.bodyStill)] : dots(layers.bodyStill), 'pet-body')}
         {twinkle(dots(layers.bodyLit))}
         {outfit.front.length > 0 && plate(dots(outfit.front))}
       </div>

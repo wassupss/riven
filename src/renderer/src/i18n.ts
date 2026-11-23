@@ -2051,9 +2051,14 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Fewer is simpler, more is closer to the photo. Changing it remakes the dots from the photo.'
   },
   'pet.maker.photoColor': { ko: '색 {n}', en: 'Colour {n}' },
+  'pet.maker.resolution': { ko: '해상도', en: 'Resolution' },
+  'pet.maker.resolutionDesc': {
+    ko: '도트 칸 수예요. 펫 크기는 그대로이고, 클수록 더 촘촘하고 자세해요. 바꾸면 사진에서 다시 만들어요.',
+    en: 'Dots across. The pet stays the same size; more is finer and more detailed. Changing it remakes the dots from the photo.'
+  },
   'pet.maker.photoHint': {
-    ko: '사진을 32x32 도트 그대로 그려요. 얼굴은 따로 그리지 않고 기분은 움직임으로 보여 줘요.',
-    en: 'The photo is drawn as 32x32 dots as it is. No face is added; its mood shows in how it moves.'
+    ko: '사진을 {n}x{n} 도트 그대로 그려요. 얼굴은 따로 그리지 않고 기분은 움직임으로 보여 줘요.',
+    en: 'The photo is drawn as {n}x{n} dots as it is. No face is added; its mood shows in how it moves.'
   },
   'pet.stat.species': { ko: '종', en: 'Strain' },
   'pet.form.radiant': { ko: '광휘', en: 'Radiant' },

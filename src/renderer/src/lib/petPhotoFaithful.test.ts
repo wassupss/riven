@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import {
   PHOTO_FIT,
+  photoFit,
   backgroundMask,
   cropSquare,
   defaultCrop,
@@ -16,7 +17,12 @@ import { canvas, catPhoto, diskPhoto, paint, penguinPhoto } from './petPhoto.fix
 import {
   PHOTO,
   PHOTO_CHARS,
+  PHOTO_SIZES,
   designOf,
+  minPhotoCells,
+  photoAt32,
+  photoLine,
+  photoSizeOf,
   hexToRgb,
   noteDesign,
   packDesign,
@@ -30,7 +36,7 @@ import {
   type PhotoArt
 } from '../state/petSpecies'
 import { PHOTO_DOT, customBodies, photoGrid, scalePhoto } from '../components/petCustomArt'
-import { PALETTE, SPRITE_SIZE, outfitPixels, pixelsOf } from '../components/petSprites'
+import { PALETTE, SPRITE_SIZE, outfitPixels, photoDrawing, pixelsOf, runPaths, runsOf } from '../components/petSprites'
 import { FORMS, PRIZES, type Stage } from '../state/pet'
 
 // "사진 충실 모드": a photo species drawn as its own 32x32 picture.
@@ -358,5 +364,239 @@ describe('a faithful design, drawn', () => {
     }
     const hat = PRIZES.find((p) => p.slot === 'head')!
     expect(outfitPixels('adult', 'base', id(k), [hat.id]).front.length).toBeGreaterThan(0)
+  })
+})
+
+// ---- the resolution choice: 32, 48 or 64 dots across the same 32 css pixels ----
+
+describe('a faithful picture at 32, 48 and 64', () => {
+  const made = Object.fromEntries(
+    PHOTO_SIZES.map((n) => {
+      const { sq, fg } = cutout(catPhoto())
+      return [n, faithfulDesignFromPhoto(sq, fg, `cat${n}`, 16, n)!]
+    })
+  ) as Record<(typeof PHOTO_SIZES)[number], CustomDesign>
+
+  it.each(PHOTO_SIZES)('%i: a valid picture of that size, in one piece, with room for its outline', (n) => {
+    const p = made[n].photo!
+    expect(photoSizeOf(p)).toBe(n)
+    // 32 says nothing of its size, as every picture from before the choice.
+    expect('size' in p).toBe(n !== PHOTO)
+    expect(p.rows).toHaveLength(n)
+    for (const row of p.rows) expect(row).toHaveLength(n)
+    expect(sanitizePhoto(p)).toEqual(p)
+    expect(parts(p.rows)).toBe(1)
+    const air = photoLine(n)
+    for (let k = 0; k < air; k++) {
+      expect(p.rows[k]).toBe('.'.repeat(n))
+      expect(p.rows[n - 1 - k]).toBe('.'.repeat(n))
+      for (const row of p.rows) expect(row[k] + row[n - 1 - k]).toBe('..')
+    }
+    // Standing on the bottom of its room.
+    expect(p.rows[air + photoFit(n) - 1]).not.toBe('.'.repeat(n))
+  })
+
+  it('more dots, more detail: a bigger grid lights more dots', () => {
+    const lit32 = lit(made[32].photo!.rows)
+    const lit48 = lit(made[48].photo!.rows)
+    const lit64 = lit(made[64].photo!.rows)
+    expect(lit48).toBeGreaterThan(lit32 * 1.8)
+    expect(lit64).toBeGreaterThan(lit48 * 1.5)
+  })
+
+  it.each(PHOTO_SIZES)('%i: survives the file and a snapshot exactly', (n) => {
+    const d = made[n]
+    const json = JSON.parse(JSON.stringify(designOf(d)))
+    const back = sanitizeDesign(json)!
+    expect(back.photo).toEqual(d.photo)
+    expect(sameDesign(back, d)).toBe(true)
+    const [again] = readSpeciesFile(
+      JSON.parse(JSON.stringify({ version: 1, species: [{ ...d, id: 'u-res00001', createdAt: 1, updatedAt: 1 }] }))
+    )
+    expect(again.photo).toEqual(d.photo)
+  })
+
+  it.each(PHOTO_SIZES)('%i: a battle code carries it at 32x32, so codes stay short', (n) => {
+    const d = made[n]
+    const packed = packDesign(d)
+    const [hex, dots] = packed[6] as [string, string]
+    expect(dots).toHaveLength(PHOTO * PHOTO)
+    expect(hex).toHaveLength(d.photo!.palette.length * 6)
+    const back = unpackDesign(JSON.parse(JSON.stringify(packed)))!
+    expect(back.photo).toBeTruthy()
+    expect(photoSizeOf(back.photo!)).toBe(PHOTO)
+    expect('size' in back.photo!).toBe(false)
+    expect(back.photo!.palette).toEqual(d.photo!.palette)
+    expect(back.photo).toEqual(photoAt32(d.photo!))
+    if (n === PHOTO) expect(back.photo).toEqual(d.photo)
+    // The rest of the design is untouched.
+    expect(back.art).toEqual(d.art)
+    expect(back.colors).toEqual(d.colors)
+    // A 64 code is no longer than a 32 one would be.
+    expect(JSON.stringify(packed).length).toBeLessThanOrEqual(JSON.stringify(packDesign(made[32])).length + 200)
+  })
+
+  it('photoAt32 is area-weighted: a 64 drawn in 2x2 blocks comes down to exactly its 32', () => {
+    const p32 = made[32].photo!
+    const rows64 = p32.rows.flatMap((r) => {
+      const wide = [...r].map((c) => c + c).join('')
+      return [wide, wide]
+    })
+    const p64 = sanitizePhoto({ ...p32, rows: rows64, size: 64 })!
+    expect(p64).not.toBeNull()
+    // Dot for dot the same colours (two palette entries can be the same colour,
+    // so the colours are compared, not the indices).
+    const hexes = (p: PhotoArt): string[] => p.rows.map((r) => [...r].map((c) => (c === '.' ? '.' : p.palette[PHOTO_CHARS.indexOf(c)])).join(','))
+    const down = photoAt32(p64)!
+    expect(down.palette).toEqual(p32.palette)
+    expect(hexes(down)).toEqual(hexes(p32))
+    // And a 32 is returned as it is.
+    expect(photoAt32(p32)).toBe(p32)
+  })
+
+  it('photoAt32 picks the palette colour nearest the mean, and drops dots under half lit', () => {
+    // A 64 grid: one red dot in each 2x2 block of a red region (a quarter lit) and
+    // full blocks elsewhere, half red and half dark red.
+    const rows = Array.from({ length: 64 }, (_, y) =>
+      Array.from({ length: 64 }, (_, x) => {
+        if (y < 16 || y >= 48 || x < 8 || x >= 56) return '.'
+        if (y < 24) return x % 2 === 0 && y % 2 === 0 ? '0' : '.'
+        return x % 2 === 0 ? '0' : '1'
+      }).join('')
+    )
+    const p = sanitizePhoto({ palette: ['#ff0000', '#800000', '#c00000'], rows, size: 64 })!
+    expect(p).not.toBeNull()
+    const small = photoAt32(p)!
+    // The quarter-lit rows are gone.
+    expect(small.rows[8]).toBe('.'.repeat(32))
+    // Half #ff0000 and half #800000 is nearest #c00000.
+    expect(small.rows[20][10]).toBe('2')
+  })
+
+  describe('sanitizePhoto with a size', () => {
+    const square = (n: number, size?: unknown): unknown => ({
+      palette: ['#112233', '#445566'],
+      rows: Array.from({ length: n }, (_, y) =>
+        y > 4 && y < n - 4 ? '..' + '01'.repeat((n - 4) / 2) + '..' : '.'.repeat(n)
+      ),
+      ...(size === undefined ? {} : { size })
+    })
+
+    it.each(PHOTO_SIZES)('accepts %i with rows to match', (n) => {
+      const p = sanitizePhoto(square(n, n))!
+      expect(p).not.toBeNull()
+      expect(photoSizeOf(p)).toBe(n)
+    })
+
+    it('an old 32 picture (no size) comes back exactly as it was; a 32 that says so is the same picture', () => {
+      const old = square(32) as PhotoArt
+      expect(sanitizePhoto(old)).toEqual(old)
+      expect('size' in sanitizePhoto(old)!).toBe(false)
+      expect(sanitizePhoto(square(32, 32))).toEqual(old)
+    })
+
+    it.each([
+      ['a size it cannot be made at', square(40, 40)],
+      ['16', square(16, 16)],
+      ['a size as text', square(48, '48')],
+      ['48 with 32 rows', square(32, 48)],
+      ['no size with 64 rows', square(64)],
+      ['64 with 48 rows', square(48, 64)],
+      ['64 with a short row', { ...(square(64, 64) as PhotoArt), rows: [...(square(64, 64) as PhotoArt).rows.slice(0, 63), '.'.repeat(48)] }],
+      ['64 with 17 colours', { ...(square(64, 64) as PhotoArt), palette: Array(17).fill('#000000') }],
+      ['a speck at 64', { palette: ['#000000'], rows: Array.from({ length: 64 }, (_, y) => (y === 9 ? '0'.repeat(minPhotoCells(64) - 1).padEnd(64, '.') : '.'.repeat(64))), size: 64 }]
+    ])('rejects %s', (_, raw) => {
+      expect(sanitizePhoto(raw)).toBeNull()
+    })
+  })
+
+  describe('drawn', () => {
+    const id = (n: number): CustomSpeciesId => `u-res${n}` as CustomSpeciesId
+    beforeAll(() => PHOTO_SIZES.forEach((n) => noteDesign(id(n), made[n])))
+    const STAGES: Stage[] = ['hatchling', 'child', 'teen', 'adult']
+
+    it.each(PHOTO_SIZES)('%i: every stage and form, the picture on its grid and the marks on the 32 one', (n) => {
+      for (const stage of STAGES)
+        for (const form of stage === 'adult' ? FORMS : (['base'] as const)) {
+          const drawn = photoDrawing(stage, form, id(n), stage === 'adult' ? 'omega' : null)!
+          expect(drawn.size).toBe(n)
+          expect(drawn.picture.length).toBeGreaterThan(20)
+          for (const d of drawn.picture) {
+            expect(d.x >= 0 && d.y >= 0 && d.x < n && d.y < n).toBe(true)
+            expect((PHOTO_DOT + 'ow').includes(d.ch)).toBe(true)
+          }
+          // What the rest of the pet reads is on the 32 grid, faceless.
+          const dots = pixelsOf(stage, form, 'happy', id(n))
+          for (const d of dots) {
+            expect(d.x >= 0 && d.y >= 0 && d.x < SPRITE_SIZE && d.y < SPRITE_SIZE).toBe(true)
+            expect((PALETTE + PHOTO_DOT).includes(d.ch)).toBe(true)
+            expect(d.ch === 'e' || d.ch === 'm').toBe(false)
+          }
+          // A mark never sits on the picture.
+          const k = n / SPRITE_SIZE
+          const under = new Set(drawn.picture.map((d) => `${Math.floor(d.x / k)},${Math.floor(d.y / k)}`))
+          for (const m of drawn.marks) expect(under.has(`${m.x},${m.y}`)).toBe(false)
+        }
+    })
+
+    it.each(PHOTO_SIZES)('%i: the grown-up is the picture itself, dot for dot, outlined', (n) => {
+      const p = made[n].photo!
+      const drawn = photoDrawing('adult', 'base', id(n))!
+      const at = new Map(drawn.picture.map((d) => [`${d.x},${d.y}`, d.ch]))
+      p.rows.forEach((row, y) =>
+        [...row].forEach((ch, x) => {
+          if (ch !== '.') expect(at.get(`${x},${y}`)).toBe(PHOTO_DOT[PHOTO_CHARS.indexOf(ch)])
+        })
+      )
+      expect(drawn.picture.filter((d) => d.ch === 'o').length).toBeGreaterThan(n)
+    })
+
+    it.each(PHOTO_SIZES)('%i: it grows, the hatchling in its shell, every size one piece', (n) => {
+      const d = made[n]
+      const size = (s: Stage): number => photoGrid(d, s as 'adult').join('').replace(/[.ow]/g, '').length
+      expect(size('hatchling')).toBeLessThan(size('child'))
+      expect(size('child')).toBeLessThan(size('teen'))
+      expect(size('teen')).toBeLessThanOrEqual(size('adult'))
+      for (const s of STAGES) {
+        const g = photoGrid(d, s as 'adult')
+        expect(g).toHaveLength(n)
+        expect(parts(g.map((r) => r.replace(/[ow]/g, '.')))).toBe(1)
+      }
+      expect(photoGrid(d, 'hatchling').join('')).toContain('w')
+    })
+
+    it.each(PHOTO_SIZES)('%i: titan is wider and wraith thinner, by about the same css pixels', (n) => {
+      const span = (form: (typeof FORMS)[number]): number => {
+        const xs = photoDrawing('adult', form, id(n))!.picture.map((d) => d.x)
+        return (Math.max(...xs) - Math.min(...xs) + 1) / (n / SPRITE_SIZE)
+      }
+      const count = (form: (typeof FORMS)[number]): number => photoDrawing('adult', form, id(n))!.picture.length
+      expect(span('titan')).toBeGreaterThan(span('base') + 2)
+      expect(count('wraith')).toBeLessThan(count('base'))
+    })
+
+    it.each(PHOTO_SIZES)('%i: drawn as whole-dot paths, no fractional coordinates', (n) => {
+      for (const stage of STAGES) {
+        const drawn = photoDrawing(stage, 'base', id(n))!
+        const paths = runPaths(runsOf(drawn.picture))
+        expect(paths.length).toBeLessThanOrEqual(18)
+        for (const { d } of paths) {
+          expect(d).not.toMatch(/\./)
+          for (const v of d.match(/-?\d+/g)!.map(Number)) expect(Math.abs(v)).toBeLessThanOrEqual(n)
+        }
+      }
+    })
+
+    it.each(PHOTO_SIZES)('%i: cached per stage, and wears every prize', (n) => {
+      const d = made[n]
+      expect(photoGrid(d, 'teen')).toBe(photoGrid(d, 'teen'))
+      expect(customBodies(d)).toBe(customBodies(d))
+      for (const prize of PRIZES) {
+        const { back, front } = outfitPixels('adult', 'base', id(n), [prize.id])
+        for (const p of [...back, ...front]) expect(p.x >= 0 && p.x < SPRITE_SIZE && p.y >= 0 && p.y < SPRITE_SIZE).toBe(true)
+      }
+      const hat = PRIZES.find((p) => p.slot === 'head')!
+      expect(outfitPixels('adult', 'base', id(n), [hat.id]).front.length).toBeGreaterThan(0)
+    })
   })
 })
