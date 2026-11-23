@@ -1920,28 +1920,37 @@ export const DICT: Record<string, { ko: string; en: string }> = {
 
   // ---- 리븐펫 (the floating pet device) ----
   'pet.title': { ko: '리븐펫', en: 'RivenPet' },
-  'settings.petShow': { ko: '리븐펫 사용', en: 'Show RivenPet' },
-  'settings.petShowDesc': {
-    ko: '에이전트가 쓴 토큰을 먹고 자라는 펫. 끄면 화면 어디에도 나오지 않습니다.',
-    en: 'The pet that grows on the tokens your agents spend. Off keeps it off your screen entirely.'
-  },
-  'settings.petDetached': { ko: '별도 창으로 띄우기', en: 'Float in its own window' },
-  'settings.petDetachedDesc': {
-    ko: '끄면 리븐 창 안에서만 떠다닙니다.',
-    en: 'Off keeps it inside the riven window.'
-  },
-  'settings.petOnTop': { ko: '항상 위에 두기', en: 'Keep on top' },
-  'settings.petBreak': { ko: '쉬는 시간 알림', en: 'Break reminder' },
-  'settings.petBreakDesc': {
-    ko: '이만큼 쉬지 않고 코딩하면 펫이 쉬자고 조릅니다.',
-    en: 'After this long coding without a pause, the pet asks you to take a break.'
-  },
+  'settings.petBreakEvery': { ko: '알림 간격', en: 'Remind after' },
+  'pet.mode.manage': { ko: '내 펫', en: 'MY PETS' },
+  'pet.nest.stale': { ko: '목록이 바뀌었어요. 다시 확인하고 눌러 주세요.', en: 'The list changed. Check it and try again.' },
+  'pet.nest.noAnswer': { ko: '펫 창이 응답하지 않아요. 잠시 뒤 다시 눌러 주세요.', en: "The pet's window did not answer. Try again in a moment." },
+  'pet.nest.full': { ko: '최대 {max}마리예요. 한 마리를 보내주면 받을 수 있어요.', en: 'Up to {max} pets. Let one go to make room.' },
+  'pet.nest.adopt': { ko: '알 받기', en: 'Get an egg' },
+  'pet.nest.random': { ko: '랜덤', en: 'Random' },
+  'pet.nest.species': { ko: '알의 종', en: 'Species of the egg' },
+  'pet.nest.newEgg': { ko: '새 알 받기', en: 'New egg' },
+  'pet.nest.lastOne': { ko: '마지막 한 마리는 보낼 수 없어요', en: 'The last pet cannot be let go' },
+  'pet.nest.releaseConfirm': { ko: '"{name}"을(를) 도감에 남기고 보내줄까요?', en: 'Let "{name}" go? It stays in the album.' },
+  'pet.nest.restartConfirm': { ko: '"{name}"을(를) 도감에 남기고 랜덤 알부터 다시 키울까요?', en: 'Keep "{name}" in the album and start over from a random egg?' },
+  'pet.nest.release': { ko: '보내주기', en: 'Let go' },
+  'pet.nest.restart': { ko: '처음부터', en: 'Start over' },
+  'pet.nest.rename': { ko: '이름 바꾸기', en: 'Rename' },
+  'pet.nest.shown': { ko: '보는 중', en: 'Showing' },
+  'pet.nest.show': { ko: '보이기', en: 'Show' },
+  'pet.nest.count': { ko: '내 펫 ({n}/{max})', en: 'My pets ({n}/{max})' },
+  'pet.nest.title': { ko: '내 펫', en: 'My pets' },
+  'pet.openSettings': { ko: '설정 열기', en: 'Open settings' },
+  'pet.hide': { ko: '숨기기', en: 'Hide' },
+  'pet.onTop': { ko: '항상 위', en: 'Always on top' },
+  'pet.where.outside': { ko: '별도 창', en: 'Own window' },
+  'pet.where.inside': { ko: '앱 안', en: 'In the app' },
+  'pet.where': { ko: '있는 곳', en: 'Lives' },
+  'pet.display': { ko: '표시', en: 'Display' },
+  'pet.showPet': { ko: '리븐펫 보이기', en: 'Show RivenPet' },
+  'settings.petBreak': { ko: '휴식 알림', en: 'Break reminder' },
+  'settings.petBreakDesc': { ko: '에이전트가 이만큼 쉬지 않고 일하면 펫이 쉬자고 해요.', en: 'After this long of agent work without a pause, the pet asks for a break.' },
   'settings.petBreakMin': { ko: '{n}분', en: '{n} min' },
   'settings.petBreakOff': { ko: '안 함', en: 'Off' },
-  'settings.petOnTopDesc': {
-    ko: '다른 앱 위로 항상 올라옵니다. 끄면 보통 창처럼 뒤로 갑니다.',
-    en: 'Floats above other apps. Off lets it fall behind them like any window.'
-  },
   'pet.default.name': { ko: '이름 없음', en: 'Unnamed' },
   'pet.stage.egg': { ko: '알', en: 'Egg' },
   'pet.stage.hatchling': { ko: '부화체', en: 'Hatchling' },
@@ -1967,11 +1976,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.species.axolotl': { ko: '우파루파', en: 'Axolotl' },
   'pet.species.slime': { ko: '슬라임', en: 'Slime' },
   'pet.species.custom': { ko: '내가 만든 종', en: 'Homemade' },
-  'pet.maker.section': { ko: '사진으로 만든 종', en: 'Species from photos' },
-  'pet.maker.sectionDesc': {
-    ko: '사진을 도트로 바꿔 새 종을 만들어요. 알에서 태어나 다른 동물처럼 자라고, 먹고, 싸우고, 말해요. 사진은 이 컴퓨터 밖으로 나가지 않아요.',
-    en: 'Turn a photo into dot art and a new species. It hatches from an egg and grows, eats, battles and talks like any other animal. The photo never leaves this computer.'
-  },
+  'pet.maker.sectionDesc': { ko: '사진을 도트로 바꿔 새 종을 만들어요. 사진은 이 컴퓨터 밖으로 나가지 않아요.', en: 'Turn a photo into dot art and a new species. The photo never leaves this computer.' },
   'pet.maker.create': { ko: '사진으로 만들기', en: 'Make from a photo' },
   'pet.maker.empty': { ko: '아직 만든 종이 없어요', en: 'No species made yet' },
   'pet.maker.edit': { ko: '고치기', en: 'Edit' },
@@ -1981,21 +1986,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Delete the species "{name}"? Pets already raised as it keep their look.'
   },
   'pet.maker.limit': { ko: '최대 {n}종까지 만들 수 있어요', en: 'Up to {n} species' },
-  'pet.maker.hatchHint': {
-    ko: '"키우기"를 누르면 지금 바로 그 종의 알을 받아요. 펫 화면의 "다음 알"로 정해 둘 수도 있어요.',
-    en: 'Press "Raise" to get an egg of it right now, or pick it as "Next egg" on the pet\'s own setup screen.'
-  },
-  'pet.maker.raise': { ko: '키우기', en: 'Raise' },
-  'pet.maker.raiseDesc': { ko: '이 종의 알을 지금 받아서 바로 키워요', en: 'Get an egg of this species now' },
-  'pet.maker.raised': { ko: '"{name}" 알을 받았어요. 펫 화면에서 바로 보여요.', en: 'An egg of "{name}" is here, shown on the pet now.' },
-  'pet.maker.raiseNoPet': {
-    ko: '펫이 화면에 없어요. 설정에서 펫 보이기를 켠 뒤 다시 눌러 주세요.',
-    en: 'The pet is not on screen. Turn it on above, then press again.'
-  },
-  'pet.maker.raiseFull': {
-    ko: '펫은 최대 {max}마리까지예요. 펫 화면 설정에서 한 마리를 떠나보내면 받을 수 있어요.',
-    en: 'Up to {max} pets. Let one go from the pet\'s setup screen to make room.'
-  },
+  'pet.maker.raised': { ko: '"{name}" 알을 받았어요.', en: 'An egg of "{name}" is here.' },
   'pet.maker.step.photo': { ko: '1. 사진', en: '1. Photo' },
   'pet.maker.step.cutout': { ko: '2. 배경 지우기', en: '2. Background' },
   'pet.maker.step.dots': { ko: '3. 도트', en: '3. Dots' },
@@ -2115,7 +2106,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.battle.loss': { ko: '패배...', en: 'You lost...' },
   'pet.battle.draw': { ko: '무승부', en: 'Draw' },
   'pet.battle.notCounted': { ko: '오늘은 이미 기록됨', en: 'already counted today' },
-  'pet.mode.settings': { ko: '설정', en: 'SETUP' },
   'pet.mode.clock': { ko: '시계', en: 'CLOCK' },
   'pet.mode.talk': { ko: '대화', en: 'TALK' },
   'pet.clock.reset': { ko: '{in} 뒤 한도 리셋', en: 'limit resets in {in}' },
@@ -2269,17 +2259,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.mode.awards': { ko: '업적', en: 'AWARDS' },
   'pet.back': { ko: '나가기', en: 'Back' },
   'pet.clock.age': { ko: '태어난 지 {age}', en: '{age} old' },
-  'pet.settings': { ko: '설정', en: 'Setup' },
-  'pet.settings.name': { ko: '이름', en: 'Name' },
-  'pet.settings.noName': { ko: '짓기', en: 'set' },
-  'pet.settings.where': { ko: '있는 곳', en: 'Lives' },
-  'pet.settings.inside': { ko: '앱 안 · 꺼내기', en: 'in app · pop out' },
-  'pet.settings.outside': { ko: '앱 밖 · 되돌리기', en: 'outside · put back' },
-  'pet.settings.onTop': { ko: '항상 위', en: 'On top' },
-  'pet.settings.onTopOn': { ko: '켬', en: 'on' },
-  'pet.settings.onTopOff': { ko: '끔', en: 'off' },
-  'pet.menu.popOut': { ko: '앱 밖으로 꺼내기', en: 'Pop out' },
-  'pet.menu.putBack': { ko: '앱 안으로 되돌리기', en: 'Put back in app' },
+  'pet.menu.popOut': { ko: '별도 창으로 옮기기', en: 'Move to its own window' },
+  'pet.menu.putBack': { ko: '앱 안으로 옮기기', en: 'Move into the app' },
   'pet.menuHi.0': { ko: '뭐 해줄 거야?', en: 'What are we doing?' },
   'pet.menuHi.1': { ko: '불렀어?', en: 'You called?' },
   'pet.menuHi.2': { ko: '쉬엄쉬엄 해!', en: 'Pace yourself!' },
@@ -2292,18 +2273,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.menuHi.sleep': { ko: '음냐… 왜…', en: 'Mm… what…' },
   'pet.menuHi.egg': { ko: '(톡톡)', en: '(tap tap)' },
   'pet.bare.hint': { ko: '클릭: 쓰다듬기 · 우클릭: 메뉴', en: 'Click to pat · Right-click for the menu' },
-  'pet.settings.hide': { ko: '보이기', en: 'Visible' },
-  'pet.settings.hideDo': { ko: '숨기기', en: 'hide' },
-  'pet.settings.restart': { ko: '처음부터', en: 'Start over' },
-  'pet.settings.restartDo': { ko: '새 알', en: 'new egg' },
-  'pet.settings.switch': { ko: '돌보는 펫', en: 'Looking after' },
-  'pet.settings.adopt': { ko: '한 마리 더', en: 'Another pet' },
-  'pet.settings.egg': { ko: '다음 알', en: 'Next egg' },
-  'pet.settings.eggRandom': { ko: '랜덤', en: 'random' },
-  'pet.settings.adoptDo': { ko: '알 받기 ({n}/{max})', en: 'add an egg ({n}/{max})' },
-  'pet.settings.nestFull': { ko: '최대 {max}마리', en: '{max} at most' },
-  'pet.settings.release': { ko: '보내주기', en: 'Let go' },
-  'pet.settings.releaseDo': { ko: '도감으로', en: 'to the album' },
   'pet.say.egg': { ko: '아직 알이에요', en: 'Still an egg' },
   'pet.say.alreadyClean': { ko: '이미 깨끗해요', en: 'Already clean' },
   'pet.say.notIll': { ko: '아프지 않아요', en: 'Not ill' },
@@ -2341,7 +2310,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.stat.age': { ko: '나이', en: 'Age' },
   'pet.stat.neglect': { ko: '굶긴 시간', en: 'Left hungry' },
   'pet.stat.noNeglect': { ko: '없음', en: 'none' },
-  'pet.egg.waiting': { ko: '부화를 기다려요', en: 'Waiting to hatch' },
   'pet.stat.lastMeal': { ko: '마지막 식사', en: 'Last meal' },
   'pet.toNext': { ko: '다음 단계까지 {n}알', en: '{n} kibble to grow' },
   'pet.grown': { ko: '다 자랐어요', en: 'Fully grown' },
@@ -2373,17 +2341,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.acc.santa': { ko: '산타 모자', en: 'santa hat' },
   'pet.acc.blossom': { ko: '벚꽃', en: 'cherry blossom' },
   'pet.pet': { ko: '쓰다듬기', en: 'Pet' },
-  'pet.rename': { ko: '이름 바꾸기', en: 'Rename' },
   'pet.renameTitle': { ko: '이름을 지어주세요', en: 'Name your pet' },
-  'pet.reset': { ko: '새 알부터 다시', en: 'Start over' },
-  'pet.resetConfirm': {
-    ko: '지금까지 키운 걸 버리고 새 알부터 시작할까요?',
-    en: 'Abandon this pet and start again from an egg?'
-  },
-  'pet.releaseConfirm': {
-    ko: '지금 보이는 펫을 도감에 남기고 떠나보낼까요?',
-    en: 'Let this pet go? It stays in the album.'
-  },
   'pet.hint': {
     ko: '에이전트가 쓴 토큰 {n}개가 먹이 한 알이 돼요. 캐시에서 다시 읽은 토큰은 가격대로 10%만 쳐요.',
     en: 'Every {n} tokens your agents spend make one kibble. Cache reads count at 10%, as they are priced.'

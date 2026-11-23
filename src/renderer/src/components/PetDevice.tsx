@@ -1,4 +1,6 @@
-import { listenRaise } from '../lib/petRaise'
+import { announceNest, servePet } from '../lib/petCommand'
+import { useUI } from '../state/ui'
+import PetManage from './PetManage'
 import { isPageHidden } from '../lib/windowVisibility'
 import '../styles/pet.css'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -17,10 +19,9 @@ import {
   Heart,
   ListTree,
   MessageCircle,
-  Pencil,
+  PawPrint,
   Pill,
   Pin,
-  Settings,
   Smile,
   Swords,
   Trash2,
@@ -56,7 +57,7 @@ import {
   awardsOf,
   discoveredBranches,
   dietOf,
-  flushPetSave,
+  briefOf,
   foodTokens,
   foodTotals,
   feedFrame,
@@ -88,7 +89,7 @@ import {
   type Species,
   type Stage
 } from '../state/pet'
-import { customOf, designOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
+import { customOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
 import { PHOTO_DOT } from './petCustomArt'
 import {
   cardOf,
@@ -135,7 +136,7 @@ type ScreenMode =
   | 'awards'
   | 'album'
   | 'dex'
-  | 'settings'
+  | 'manage'
   | 'talk'
   | 'battle'
 
@@ -510,13 +511,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const cleanUp = usePet((s) => s.cleanUp)
   const giveMedicine = usePet((s) => s.giveMedicine)
   const takeBreak = usePet((s) => s.takeBreak)
-  const rename = usePet((s) => s.rename)
-  const reset = usePet((s) => s.reset)
   const pets = usePet((s) => s.pets)
   const active = usePet((s) => s.active)
-  const adopt = usePet((s) => s.adopt)
-  const letGo = usePet((s) => s.release)
-  const select = usePet((s) => s.select)
+  const apply = usePet((s) => s.apply)
   const recordBattle = usePet((s) => s.recordBattle)
   const wear = usePet((s) => s.wear)
   // What the workspaces are doing right now. The roster is app-wide on purpose:
@@ -539,21 +536,34 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [mime, setMime] = useState<string | null>(null)
   const mimeRef = useRef(false)
   const [mode, setMode] = useState<ScreenMode>('char')
-  // Settings > RivenPet "Raise": a fresh egg of that species, out at once.
+  // Settings > 리븐펫 looks after the pets too, from another window when the
+  // pet lives in its own: it asks here (lib/petCommand), and this window answers
+  // with the nest as it is after the command. A new egg comes out at once.
   useEffect(() => {
     if (!loaded) return
-    return listenRaise((hatch) => {
-      if (usePet.getState().pets.length >= MAX_PETS) return 'full'
-      adopt(hatch)
-      setMode('char')
-      return 'ok'
+    return servePet((cmd) => {
+      const result = cmd ? usePet.getState().apply(cmd) : 'ok'
+      if (cmd?.op === 'adopt' && result === 'ok') setMode('char')
+      return { result, nest: briefOf(usePet.getState(), Date.now()) }
     })
-  }, [loaded, adopt])
-  // Which LCD icon the A key's highlight is on — null when none is, which is how
-  // a real one idles. The setup screen has its own row cursor. (The strip is also
-  // clickable; the highlight is only for working it from the keys.)
+  }, [loaded])
+  // And tells everyone listening (a Settings list) whenever the nest changes:
+  // a pet out, a name, a stage. Compared as text, since the pets themselves
+  // change on every tick.
+  const lastBrief = useRef('')
+  useEffect(() => {
+    if (!loaded) return
+    const brief = briefOf({ pets, active }, Date.now())
+    const text = JSON.stringify(brief)
+    if (text === lastBrief.current) return
+    lastBrief.current = text
+    announceNest(brief)
+  }, [loaded, pets, active])
+  // Which function the A key's highlight is on (null when none is): the keyboard
+  // walks the same list the right-click menu shows.
   const [sel, setSel] = useState<number | null>(null)
-  const [row, setRow] = useState(0)
+  // What the last press in the pet's own panel did, when it is worth a word.
+  const [manageNote, setManageNote] = useState<string | null>(null)
   // A break in progress: when it began and the work streak it interrupted. Its
   // clock ticks once a second, and only while there is a break.
   const [resting, setResting] = useState<{ from: number; worked: number } | null>(null)
@@ -619,7 +629,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   useEffect(() => {
     if (!show && !detached) return
     void load()
-    return flushPetSave
+    // Not showing it any more: save, and forget the loaded nest, so showing it
+    // again reads pet.json afresh (the pet's own window or Settings may have
+    // changed it meanwhile).
+    return usePet.getState().unload
   }, [show, detached, load])
 
   // The species the keeper made from photos (made in Settings, in the app's
@@ -632,20 +645,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (!show && !detached) return
     void loadSpecies()
   }, [show, detached, loadSpecies])
-  // Opening the setup screen reads the file again, in case the message from
+  // Opening the pet panel reads the file again, in case the message from
   // the other window never came (a window that was asleep, another engine).
   useEffect(() => {
-    if (mode === 'settings') void loadSpecies()
+    if (mode === 'manage') void loadSpecies()
   }, [mode, loadSpecies])
   // An edited species shows on the pets of it at once; a deleted one leaves
   // them as they were (their own snapshot).
   useEffect(() => {
     if (speciesLoaded && loaded) syncCustom(ownSpecies)
   }, [ownSpecies, speciesLoaded, loaded, syncCustom])
-  // What the next egg will be: a random draw (null), or one of the keeper's own.
-  const [eggPick, setEggPick] = useState<string | null>(null)
-  const eggSpecies = ownSpecies.find((o) => o.id === eggPick) ?? null
-  const hatch = eggSpecies ? { id: eggSpecies.id, design: designOf(eggSpecies) } : null
 
   // The three keys, reachable from riven's keyboard shortcuts. The press is
   // relayed through main, so it works whether the device is in the app window or
@@ -678,7 +687,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     }
   }, [detached])
 
-  // Keep the setup row honest about whether the window is actually floating.
+  // Keep the on-top switch honest about whether the window is actually floating.
   useEffect(() => {
     if (!detached) return
     void window.api.pet.isOnTop().then(setWinOnTop)
@@ -1196,7 +1205,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (detached) await window.api.pet.focusable(true)
     try {
       const v = await promptInput({ title: t('pet.renameTitle'), initial: pet.name })
-      if (v !== null) rename(v.trim())
+      if (v !== null) apply({ op: 'rename', index: active, bornAt: pet.bornAt, name: v })
     } finally {
       if (detached) void window.api.pet.focusable(false)
     }
@@ -1398,11 +1407,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('talk')
     },
     {
-      id: 'settings',
-      label: t('pet.settings'),
-      node: <Settings size={11} />,
-      on: mode === 'settings',
-      run: () => openScreen('settings')
+      id: 'manage',
+      label: t('pet.nest.title'),
+      node: <PawPrint size={11} />,
+      on: mode === 'manage',
+      run: () => openScreen('manage')
     }
   ]
 
@@ -1410,6 +1419,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const openScreen = (m: ScreenMode): void => {
     setTalking(m === 'talk')
     leaveDuel()
+    setManageNote(null)
     setMode(m)
   }
 
@@ -1427,7 +1437,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // B runs the one it is on (or shows the clock), C backs out.
   const METER_PAGES: ScreenMode[] = ['stats', 'awards']
   const pressA = (): void => {
-    if (mode === 'settings') return setRow((r) => (r + 1) % settingRows.length)
     if (mode === 'battle') return void copyCode()
     if (METER_PAGES.includes(mode)) {
       const next = METER_PAGES[(METER_PAGES.indexOf(mode) + 1) % METER_PAGES.length]
@@ -1439,7 +1448,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     say(icons[next].label, PICK_MS)
   }
   const pressB = (): void => {
-    if (mode === 'settings') return runSetting(settingRows[row]?.id ?? '')
     if (mode === 'battle') {
       // Mid-fight, B skips to the end; otherwise it takes the next friend's code.
       if (duel && !outcome) return setStep(duel.bout.blows.length)
@@ -1464,104 +1472,19 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   }
   keysRef.current = { a: pressA, b: pressB, c: pressC }
 
-  // The setup list: one row, one press.
-  const settingRows: Array<{
-    id: string
-    label: string
-    value: string
-    danger?: boolean
-    on?: boolean
-  }> = [
-    { id: 'name', label: t('pet.settings.name'), value: pet.name || t('pet.settings.noName') },
-    {
-      id: 'where',
-      label: t('pet.settings.where'),
-      value: detached ? t('pet.settings.outside') : t('pet.settings.inside')
-    },
-    // Only its own window can float above other apps; inside riven it is part of
-    // the window and there is nothing to lift.
-    ...(detached
-      ? [
-          {
-            id: 'ontop',
-            label: t('pet.settings.onTop'),
-            value: onTop ? t('pet.settings.onTopOn') : t('pet.settings.onTopOff'),
-            on: onTop
-          }
-        ]
-      : []),
-    { id: 'hide', label: t('pet.settings.hide'), value: t('pet.settings.hideDo') },
-    // Which pet the buttons look after; one press shows the next one round.
-    ...(pets.length > 1
-      ? [
-          {
-            id: 'switch',
-            label: t('pet.settings.switch'),
-            value: `${active + 1}/${pets.length}`
-          }
-        ]
-      : []),
-    // Only once the keeper has made a species of their own: which egg comes next.
-    ...(ownSpecies.length
-      ? [
-          {
-            id: 'egg',
-            label: t('pet.settings.egg'),
-            value: eggSpecies ? eggSpecies.name : t('pet.settings.eggRandom'),
-            on: !!eggSpecies
-          }
-        ]
-      : []),
-    {
-      id: 'adopt',
-      label: t('pet.settings.adopt'),
-      value:
-        pets.length < MAX_PETS
-          ? t('pet.settings.adoptDo', { n: pets.length, max: MAX_PETS })
-          : t('pet.settings.nestFull', { max: MAX_PETS })
-    },
-    { id: 'restart', label: t('pet.settings.restart'), value: t('pet.settings.restartDo'), danger: true },
-    ...(pets.length > 1
-      ? [
-          {
-            id: 'release',
-            label: t('pet.settings.release'),
-            value: t('pet.settings.releaseDo'),
-            danger: true
-          }
-        ]
-      : [])
-  ]
-  const runSetting = (id: string): void => {
-    switch (id) {
-      case 'name':
-        return void doRename()
-      case 'where':
-        return void (detached ? window.api.pet.dock() : setSettings({ petDetached: true }))
-      case 'ontop':
-        // Main lifts the window and tells the app to remember it (see PetHost).
-        return void window.api.pet.askOnTop(!onTop)
-      case 'hide':
-        return void (detached ? window.api.pet.hide() : setSettings({ petShow: false }))
-      case 'restart':
-        if (window.confirm(t('pet.resetConfirm'))) reset(hatch)
-        return
-      case 'egg': {
-        // Round the list: random, then each of the keeper's own.
-        const order = [null, ...ownSpecies.map((o) => o.id)]
-        return setEggPick(order[(order.indexOf(eggSpecies?.id ?? null) + 1) % order.length])
-      }
-      case 'switch':
-        return select()
-      case 'adopt':
-        if (pets.length >= MAX_PETS) return speak(t('pet.settings.nestFull', { max: MAX_PETS }))
-        adopt(hatch)
-        return setMode('char')
-      case 'release':
-        if (window.confirm(t('pet.releaseConfirm'))) letGo()
-        return
-    }
+  // ---- looking after the pets (the pet panel, PetManage) ----
+  const ref0 = (i: number): { index: number; bornAt: number } => ({ index: i, bornAt: pets[i]?.bornAt ?? -1 })
+  const toggleWhere = (): void =>
+    void (detached ? window.api.pet.dock() : setSettings({ petDetached: true }))
+  // Main lifts the window and tells the app to remember it (see PetHost).
+  const setOnTopNow = (on: boolean): void => void window.api.pet.askOnTop(on)
+  const hide = (): void => void (detached ? window.api.pet.hide() : setSettings({ petShow: false }))
+  const openSettings = (): void => {
+    if (detached) void window.api.pet.openSettings('pet')
+    else useUI.getState().openSettings('pet')
   }
+  const nestNote = (result: string): void =>
+    setManageNote(result === 'full' ? t('pet.nest.full', { max: MAX_PETS }) : null)
   // Ask it something. Every answer is read off what riven already knows, so it
   // costs nothing and cannot invent anything (see state/petTalk.ts).
   const ask = (question: string): void => {
@@ -1654,7 +1577,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           </div>
           <div>
             <dt>{t('pet.stat.name')}</dt>
-            <dd>{name ?? t('pet.settings.noName')}</dd>
+            <dd>{name ?? t('pet.default.name')}</dd>
           </div>
           <div>
             <dt>{t('pet.stat.species')}</dt>
@@ -1764,6 +1687,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               ? t('pet.graph.empty')
               : t('pet.graph.today', { n: graph[graph.length - 1].kibble })}
           </div>
+          <p className="pet-note">{t('pet.hint', { n: KIBBLE_TOKENS.toLocaleString() })}</p>
         </div>
       )}
 
@@ -1795,24 +1719,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             )
           })}
           {growth.stage !== 'adult' && <div className="pet-award-note">{t('pet.prizeAdultOnly')}</div>}
-        </div>
-      )}
-
-      {mode === 'settings' && (
-        <div className="pet-rows pet-settings">
-          {settingRows.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              data-row={r.id}
-              className={`pet-row${r.on ? ' on' : ''}${r.danger ? ' danger' : ''}`}
-              onClick={() => runSetting(r.id)}
-            >
-              <span>{r.label}</span>
-              <b>{r.value}</b>
-            </button>
-          ))}
-          <p className="pet-note">{t('pet.hint', { n: KIBBLE_TOKENS.toLocaleString() })}</p>
         </div>
       )}
 
@@ -2059,19 +1965,19 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           role="menuitemcheckbox"
           aria-checked={onTop}
           className={`pet-menu-item${onTop ? ' on' : ''}`}
-          onClick={pick(() => runSetting('ontop'))}
+          onClick={pick(() => setOnTopNow(!onTop))}
         >
           <Pin size={11} />
-          <span>{t('pet.settings.onTop')}</span>
+          <span>{t('pet.onTop')}</span>
         </button>
       )}
-      <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(() => runSetting('where'))}>
+      <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(toggleWhere)}>
         <ExternalLink size={11} />
         <span>{detached ? t('pet.menu.putBack') : t('pet.menu.popOut')}</span>
       </button>
-      <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(() => runSetting('hide'))}>
+      <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(hide)}>
         <EyeOff size={11} />
-        <span>{t('pet.settings.hideDo')}</span>
+        <span>{t('pet.hide')}</span>
       </button>
     </div>
   )
@@ -2081,12 +1987,35 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const cardBox = peek && !menu && (
     <div
       ref={cardRef}
-      className={`pet-card${!detached && cardSide.left ? ' left' : ''}${!detached && cardSide.down ? ' down' : ''}`}
+      className={`pet-card${mode === 'manage' ? ' manage' : ''}${!detached && cardSide.left ? ' left' : ''}${!detached && cardSide.down ? ' down' : ''}`}
     >
-      <div className="pet-card-body">
-        {screen}
-        {askForm}
-      </div>
+      {mode === 'manage' ? (
+        <PetManage
+          nest={briefOf({ pets, active }, nowTick)}
+          detached={!!detached}
+          onTop={onTop}
+          own={ownSpecies}
+          note={manageNote}
+          onClose={backHome}
+          onSelect={(i) => {
+            setManageNote(null)
+            apply({ op: 'select', ...ref0(i) })
+          }}
+          onRename={() => void doRename()}
+          onRestart={() => nestNote(apply({ op: 'restart', ...ref0(active) }))}
+          onRelease={() => nestNote(apply({ op: 'release', ...ref0(active) }))}
+          onAdopt={(hatch) => nestNote(apply({ op: 'adopt', hatch }))}
+          onWhere={toggleWhere}
+          onOnTop={setOnTopNow}
+          onHide={hide}
+          onOpenSettings={openSettings}
+        />
+      ) : (
+        <div className="pet-card-body">
+          {screen}
+          {askForm}
+        </div>
+      )}
     </div>
   )
 

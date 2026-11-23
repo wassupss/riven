@@ -214,6 +214,16 @@ pub async fn pet_focusable(on: Option<Value>) -> CmdResult<()> {
   blocking(move || pet::focusable(on)).await
 }
 
+/// The pet's "Settings" button: bring riven's window up on that settings tab.
+#[tauri::command]
+pub async fn pet_open_settings(tab: Option<Value>) -> CmdResult<()> {
+  let tab = match tab {
+    Some(Value::String(t)) => t,
+    _ => "pet".to_string(),
+  };
+  blocking(move || pet::open_settings(&tab)).await
+}
+
 #[tauri::command]
 pub async fn pet_copy(text: Option<Value>) -> CmdResult<()> {
   blocking(move || pet::copy(&text.unwrap_or(Value::Null))).await

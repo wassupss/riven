@@ -97,6 +97,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     desk::pet_is_on_top,
     desk::pet_focusable,
     desk::pet_copy,
+    desk::pet_open_settings,
     browser::browser_bookmarks,
     browser::browser_history,
     browser::browser_add_bookmark,

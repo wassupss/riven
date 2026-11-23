@@ -1356,26 +1356,132 @@ export function adopt(n: Nest, now: number, hatch?: Hatch | null): Nest {
   return show({ ...n, pets: [...n.pets, egg] }, n.pets.length, now)
 }
 
-/** Let the shown pet go, into the album, and bring out the next. Never the last one. */
-export function release(n: Nest, now: number): Nest {
-  if (n.pets.length <= 1) return n
-  const album = archive(n.pets[n.active], now)
+/**
+ * Let pet `i` (the shown one by default) go, into the album. Never the last one.
+ * When it was the shown one, the next is brought out.
+ */
+export function release(n: Nest, now: number, i: number = n.active): Nest {
+  if (n.pets.length <= 1 || i < 0 || i >= n.pets.length) return n
+  const album = archive(n.pets[i], now)
   const pets = shareAlbum(
-    n.pets.filter((_, i) => i !== n.active),
+    n.pets.filter((_, k) => k !== i),
     album
   )
+  if (i !== n.active) return { ...n, pets, active: i < n.active ? n.active - 1 : n.active }
   const active = Math.min(n.active, pets.length - 1)
-  return { ...n, pets: pets.map((p, i) => (i === active ? wake(p, now) : p)), active }
+  return { ...n, pets: pets.map((p, k) => (k === active ? wake(p, now) : p)), active }
 }
 
-/** Start the shown pet over from an egg, keeping the one it was in the album. */
-export function restart(n: Nest, now: number, hatch?: Hatch | null): Nest {
-  const album = archive(n.pets[n.active], now)
+/** Start pet `i` (the shown one by default) over from an egg, keeping the one it was in the album. */
+export function restart(n: Nest, now: number, hatch?: Hatch | null, i: number = n.active): Nest {
+  if (i < 0 || i >= n.pets.length) return n
+  const album = archive(n.pets[i], now)
   const pets = shareAlbum(
-    n.pets.map((p, i) => (i === n.active ? initialState(now, hatch) : p)),
+    n.pets.map((p, k) => (k === i ? initialState(now, hatch) : p)),
     album
   )
   return { ...n, pets }
+}
+
+// ---------------------------------------------------------------------------
+// Looking after the nest from anywhere. The pet's own menu and Settings >
+// 리븐펫 offer the same actions; both go through applyCommand, so they behave
+// the same. A command names its pet by index AND birthday, so one that was
+// sent about a list that has since changed is refused rather than applied to
+// whoever now sits at that index.
+// ---------------------------------------------------------------------------
+
+/** What one pet looks like from outside: enough to list it and draw it. */
+export interface PetBrief {
+  bornAt: number
+  name: string
+  species: Species
+  /** A homemade species' design, so it can be drawn where the list is shown. */
+  custom?: CustomDesign
+  stage: Stage
+  form: Form
+  branch: BranchId | null
+  level: number
+}
+export interface NestBrief {
+  active: number
+  pets: PetBrief[]
+}
+
+export function briefOf(n: { pets: PetSave[]; active: number }, now: number): NestBrief {
+  return {
+    active: n.active,
+    pets: n.pets.map((p) => {
+      const g = growthOf(p, now)
+      return {
+        bornAt: p.bornAt,
+        name: p.name,
+        species: p.species,
+        ...(p.custom ? { custom: p.custom } : {}),
+        stage: g.stage,
+        form: g.form,
+        branch: g.branch?.id ?? null,
+        level: g.level
+      }
+    })
+  }
+}
+
+/** What a pet in a list is called: its name, or its species when it has none. */
+export function petTitle(b: Pick<PetBrief, 'name' | 'species' | 'custom'>, t: (key: string) => string): string {
+  return b.name || speciesName(b.species, t, b.custom)
+}
+
+/** The line under it: its species (when it has a name), stage or branch, and level. */
+export function petSubtitle(b: PetBrief, t: (key: string, vars?: Record<string, string | number>) => string): string {
+  const stage = b.branch ? t(`pet.branch.${b.branch}`) : t(`pet.stage.${b.stage}`)
+  return [b.name ? speciesName(b.species, t, b.custom) : null, stage, b.level > 0 ? t('pet.level', { n: b.level }) : null]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** Which pet a command is about: its place in the nest, and its birthday. */
+export interface PetRef {
+  index: number
+  bornAt: number
+}
+export type PetCommand =
+  | { op: 'adopt'; hatch: Hatch | null }
+  | ({ op: 'select' } & PetRef)
+  | ({ op: 'rename'; name: string } & PetRef)
+  | ({ op: 'restart' } & PetRef)
+  | ({ op: 'release' } & PetRef)
+/**
+ * ok: done. full: no room for another egg. last: the only pet is never let go.
+ * stale: that pet is not where the command thought it was. none: no one
+ * answered (nothing is showing the pet).
+ */
+export type PetResult = 'ok' | 'full' | 'last' | 'stale' | 'none'
+
+/** The longest name a pet takes. */
+export const PET_NAME_MAX = 24
+
+export function applyCommand(n: Nest, cmd: PetCommand, now: number): { nest: Nest; result: PetResult } {
+  if (cmd.op === 'adopt') {
+    if (n.pets.length >= MAX_PETS) return { nest: n, result: 'full' }
+    return { nest: adopt(n, now, cmd.hatch), result: 'ok' }
+  }
+  const p = n.pets[cmd.index]
+  if (!p || Math.floor(p.bornAt) !== Math.floor(cmd.bornAt)) return { nest: n, result: 'stale' }
+  switch (cmd.op) {
+    case 'select':
+      return { nest: show(n, cmd.index, now), result: 'ok' }
+    case 'rename': {
+      const name = String(cmd.name ?? '').trim().slice(0, PET_NAME_MAX)
+      if (name === p.name) return { nest: n, result: 'ok' }
+      return { nest: { ...n, pets: n.pets.map((q, i) => (i === cmd.index ? { ...q, name } : q)) }, result: 'ok' }
+    }
+    case 'restart':
+      return { nest: restart(n, now, null, cmd.index), result: 'ok' }
+    case 'release':
+      if (n.pets.length <= 1) return { nest: n, result: 'last' }
+      return { nest: release(n, now, cmd.index), result: 'ok' }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1414,21 +1520,20 @@ interface PetStore {
   giveMedicine: () => void
   /** Back from a break of `rested` ms that interrupted a `worked` ms streak. */
   takeBreak: (worked: number, rested: number, nagMs?: number) => void
-  rename: (name: string) => void
   /** Put a friend battle on the shown pet's record; false when it already counted today. */
   recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw', upset?: boolean) => boolean
   /** Put a won prize on the shown pet, or take it off. */
   wear: (id: Accessory) => void
-  /** Start the shown pet over, keeping the finished one in the album. */
-  reset: (hatch?: Hatch | null) => void
-  /** Take in another egg, if the nest has room; it becomes the shown pet. */
-  adopt: (hatch?: Hatch | null) => void
   /** Bring the pets' snapshots of custom species up to date with the keeper's list. */
   syncCustom: (own: Array<{ id: string } & CustomDesign>) => void
-  /** Let the shown pet go into the album, if it is not the only one. */
-  release: () => void
-  /** Bring another pet out of the bag: by index, or the next one round when omitted. */
-  select: (i?: number) => void
+  /** Look after the nest: a new egg, switch, rename, start over, let go (see applyCommand). */
+  apply: (cmd: PetCommand) => PetResult
+  /**
+   * Forget the loaded nest, so the next load() reads pet.json again. Called when
+   * this window stops showing the pet: another window (the pet's own, or
+   * Settings with the pet put away) may change the save meanwhile.
+   */
+  unload: () => void
 }
 
 const nestOf = (s: { pets: PetSave[]; active: number }): Nest => ({
@@ -1525,40 +1630,34 @@ export const usePet = create<PetStore>((set, get) => {
     cleanUp: () => onActive(clean),
     giveMedicine: () => onActive(cure),
     takeBreak: (worked, rested, nagMs) => onActive((p) => rest(p, worked, rested, Date.now(), nagMs)),
-    rename: (name) => onActive((p) => ({ ...p, name: name.slice(0, 24) })),
     recordBattle: (foeBornAt, result, upset) => {
       const before = get().pet
       onActive((p) => recordBattle(p, foeBornAt, result, Date.now(), upset))
       return get().pet !== before
     },
     wear: (id) => onActive((p) => toggleWear(p, id, Date.now())),
-    reset: (hatch) => {
-      set({ seen: {}, justEvolved: null, justLeveled: null })
-      commit(restart(nestOf(get()), Date.now(), hatch))
-    },
     syncCustom: (own) => {
       if (!get().loaded) return
       const pets = refreshCustom(get().pets, own)
       if (pets !== get().pets) commit({ pets, active: get().active })
     },
-    adopt: (hatch) => {
-      const n = adopt(nestOf(get()), Date.now(), hatch)
-      if (n.pets === get().pets) return
-      set({ justEvolved: null, justLeveled: null })
-      commit(n)
+    apply: (cmd) => {
+      const before = nestOf(get())
+      const { nest, result } = applyCommand(before, cmd, Date.now())
+      if (nest.pets === before.pets && nest.active === before.active) return result
+      // A different pet out (or a new egg where it was): nothing to celebrate
+      // from the one before, and a restarted pet must not eat today's earlier
+      // tokens, so the counters start again from here.
+      if (nest.active !== before.active || nest.pets[nest.active] !== before.pets[before.active]) {
+        set({ justEvolved: null, justLeveled: null })
+        if (cmd.op === 'restart' && cmd.index === before.active) set({ seen: {} })
+      }
+      commit(nest)
+      return result
     },
-    release: () => {
-      const n = release(nestOf(get()), Date.now())
-      if (n.pets === get().pets) return
-      set({ justEvolved: null, justLeveled: null })
-      commit(n)
-    },
-    select: (i) => {
-      const n = nestOf(get())
-      const next = show(n, i ?? (n.active + 1) % n.pets.length, Date.now())
-      if (next === n) return
-      set({ justEvolved: null, justLeveled: null })
-      commit(next)
+    unload: () => {
+      if (saveTimer) flushPetSave()
+      set({ loaded: false })
     }
   }
 })

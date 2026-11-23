@@ -156,6 +156,7 @@ permissions = [
   "allow-pet-set-on-top",
   "allow-pet-ask-on-top",
   "allow-pet-focusable",
+  "allow-pet-open-settings",
   "allow-pet-copy",
   "allow-git-info",
   "allow-git-repos",
@@ -1012,6 +1013,11 @@ commands.allow = ["pet_ask_on_top"]
 identifier = "allow-pet-focusable"
 description = "Allows pet_focusable."
 commands.allow = ["pet_focusable"]
+
+[[permission]]
+identifier = "allow-pet-open-settings"
+description = "Allows pet_open_settings."
+commands.allow = ["pet_open_settings"]
 
 [[permission]]
 identifier = "allow-pet-copy"

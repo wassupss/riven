@@ -161,6 +161,235 @@
 /* As tall as what it shows, up to a cap; past that the list inside scrolls.
    A fixed height cut the status and settings pages off mid-row and left the
    album and the chat a big empty box. */
+/* ---- the pet panel ("내 펫", PetManage) ----
+   The one card drawn at reading size rather than as a zoomed screen: real
+   buttons with a word on them, the same look as riven's own (border, fill,
+   hover, pressed), sized alike. */
+.pet-card.manage {
+  width: 264px;
+  padding: 8px;
+}
+.pet-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 440px;
+  overflow-y: auto;
+  font-size: var(--text-xs);
+}
+.pet-manage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pet-manage-head b {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.pet-manage-head .pet-back {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+.pet-manage-label {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--edge);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.pet-manage-note {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+.pet-nest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pet-nest-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.pet-nest-row.on {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+.pet-mini {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+.pet-mini .pet-lcd {
+  width: 100%;
+  height: 100%;
+}
+.pet-nest-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pet-nest-text b,
+.pet-nest-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pet-nest-text b {
+  font-weight: 600;
+}
+.pet-nest-text span {
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+.pet-tag {
+  flex: none;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+.pet-btns {
+  display: flex;
+  gap: 4px;
+}
+.pet-btns.three > .pet-btn,
+.pet-btns.two > .pet-btn {
+  flex: 1 1 0;
+}
+.pet-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pet-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pet-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--edge-strong);
+}
+.pet-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.pet-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pet-btn.small {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+}
+.pet-btn.wide {
+  width: 100%;
+}
+.pet-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.pet-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.pet-btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.pet-confirm p {
+  margin: 0 0 5px;
+  line-height: 1.4;
+}
+/* A pick of one: the egg's species, where it lives. */
+.pet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pet-chip {
+  height: 22px;
+  max-width: 100%;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pet-chip:hover {
+  color: var(--fg);
+  border-color: var(--edge-strong);
+}
+.pet-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.pet-manage-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pet-manage-line > span {
+  color: var(--fg-dim);
+}
+.pet-switch {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--edge-strong);
+  border-radius: 9px;
+  background: var(--bg-3);
+  cursor: pointer;
+}
+.pet-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: transform var(--dur-fast, 0.12s) ease;
+}
+.pet-switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pet-switch.on i {
+  transform: translateX(12px);
+  background: var(--on-accent);
+}
 .pet-card .pet-screen {
   aspect-ratio: auto;
   height: auto;

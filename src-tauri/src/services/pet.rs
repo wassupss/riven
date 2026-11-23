@@ -318,6 +318,23 @@ pub fn is_on_top() -> bool {
   win().and_then(|w| w.is_always_on_top().ok()).unwrap_or(false)
 }
 
+/// Settings asked for from the pet (its own window has no settings of its
+/// own): riven's window comes up and opens them at `tab`.
+pub fn open_settings(tab: &str) {
+  let Some(app) = app() else { return };
+  let Some(label) = super::browser::app_window() else { return };
+  if let Some(w) = app.get_window(&label) {
+    if !crate::background() {
+      if w.is_minimized().unwrap_or(false) {
+        let _ = w.unminimize();
+      }
+      let _ = w.show();
+      let _ = w.set_focus();
+    }
+  }
+  crate::commands::emit_ipc(app, &label, "pet:openSettings", json!([tab]));
+}
+
 /// Renaming needs a keyboard: focusable for that moment, then given back.
 pub fn focusable(on: bool) {
   let Some(w) = win() else { return };

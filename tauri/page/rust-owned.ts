@@ -278,7 +278,8 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pet:askOnTop': ['on'],
   'pet:isOnTop': [],
   'pet:focusable': ['on'],
-  'pet:copy': ['text']
+  'pet:copy': ['text'],
+  'pet:openSettings': ['tab']
 }
 
 // ipcRenderer.sendSync channels, each with its async twin. Tauri has no

@@ -15,7 +15,7 @@ import RemoteSettings from './RemoteSettings'
 import { useRemote } from '../state/remote'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
-import PetSpeciesSettings from './PetSpeciesSettings'
+import PetNestSettings from './PetNestSettings'
 import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
@@ -702,31 +702,31 @@ export default function SettingsModal(): JSX.Element | null {
             )}
             {tab === 'pet' && (
               <>
-                <div className="section-label">{t('pet.title')}</div>
-                <ToggleRow
-                  title={t('settings.petShow')}
-                  desc={t('settings.petShowDesc')}
-                  checked={settings.petShow}
-                  onChange={(v) => upd('petShow', v)}
-                />
+                {/* The pet's own panel (its right-click menu > 내 펫) has the same
+                    controls with the same words; this is the overview. */}
+                <div className="section-label">{t('pet.display')}</div>
+                <ToggleRow title={t('pet.showPet')} checked={settings.petShow} onChange={(v) => upd('petShow', v)} />
                 {settings.petShow && (
-                  <ToggleRow
-                    title={t('settings.petDetached')}
-                    desc={t('settings.petDetachedDesc')}
-                    checked={settings.petDetached}
-                    onChange={(v) => upd('petDetached', v)}
-                  />
+                  <Row title={t('pet.where')}>
+                    <Segmented
+                      value={settings.petDetached ? 'outside' : 'inside'}
+                      options={[
+                        { value: 'inside', label: t('pet.where.inside') },
+                        { value: 'outside', label: t('pet.where.outside') }
+                      ]}
+                      onChange={(v) => upd('petDetached', v === 'outside')}
+                    />
+                  </Row>
                 )}
                 {/* Only its own window can be lifted above other apps. */}
                 {settings.petShow && settings.petDetached && (
-                  <ToggleRow
-                    title={t('settings.petOnTop')}
-                    desc={t('settings.petOnTopDesc')}
-                    checked={settings.petOnTop}
-                    onChange={(v) => upd('petOnTop', v)}
-                  />
+                  <ToggleRow title={t('pet.onTop')} checked={settings.petOnTop} onChange={(v) => upd('petOnTop', v)} />
                 )}
-                <Row title={t('settings.petBreak')} desc={t('settings.petBreakDesc')}>
+
+                <PetNestSettings />
+
+                <div className="section-label">{t('settings.petBreak')}</div>
+                <Row title={t('settings.petBreakEvery')} desc={t('settings.petBreakDesc')}>
                   <Select value={String(settings.petBreakMin)} onChange={(e) => upd('petBreakMin', Number(e.target.value))}>
                     {[30, 45, 60, 90, 120].map((n) => (
                       <option key={n} value={n}>
@@ -736,10 +736,6 @@ export default function SettingsModal(): JSX.Element | null {
                     <option value={0}>{t('settings.petBreakOff')}</option>
                   </Select>
                 </Row>
-
-                <div className="section-label">{t('pet.maker.section')}</div>
-                <PetSpeciesSettings />
-
               </>
             )}
 

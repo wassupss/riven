@@ -235,7 +235,19 @@
 .pm-item {
   justify-content: flex-start;
 }
-.pm-item .set-rowctl .ui-btn {
+/* A pet in Settings > 리븐펫 > 내 펫: its buttons wrap rather than squeeze. */
+.pet-nest-item .set-rowctl {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pet-nest-shown {
+  padding: 0 8px;
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.pm-item .set-rowctl .ui-btn-ghost {
   width: var(--ctl-h);
   padding: 0;
 }

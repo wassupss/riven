@@ -4,6 +4,8 @@ import { DEFAULT_SETTINGS, migrateLegacy, type Settings } from './settings'
 import {
   adopt,
   feedFrame,
+  applyCommand,
+  briefOf,
   drawSpecies,
   normalizeNest,
   release,
@@ -996,6 +998,87 @@ describe('the nest', () => {
     // A save whose pets disagree is brought into step on load.
     const odd = { version: 2, active: 0, pets: [n.pets[0], { ...n.pets[1], album: [] }] }
     for (const p of normalizeNest(odd, now).pets) expect(p.album).toHaveLength(1)
+  })
+})
+
+describe('looking after the nest (applyCommand)', () => {
+  const now = T0 + 48 * HOUR
+  const grown = (name: string, bornAt: number): PetSave => ({ ...base({ xp: 900, bornAt }), name })
+  const three = (): ReturnType<typeof normalizeNest> =>
+    normalizeNest({ version: 2, active: 1, pets: [grown('a', 1), grown('b', 2), grown('c', 3)] }, now)
+  const ref = (n: ReturnType<typeof normalizeNest>, i: number): { index: number; bornAt: number } => ({
+    index: i,
+    bornAt: n.pets[i].bornAt
+  })
+
+  it('lets a pet that is not shown go, and keeps the shown one out', () => {
+    const n = three()
+    const r = applyCommand(n, { op: 'release', ...ref(n, 0) }, now)
+    expect(r.result).toBe('ok')
+    expect(r.nest.pets.map((p) => p.name)).toEqual(['b', 'c'])
+    expect(r.nest.active).toBe(0)
+    expect(r.nest.pets[0].lastTickAt).toBe(n.pets[1].lastTickAt)
+    for (const p of r.nest.pets) expect(p.album.map((a) => a.name)).toEqual(['a'])
+    // Past the shown one: the shown one keeps its place.
+    expect(applyCommand(n, { op: 'release', ...ref(n, 2) }, now).nest.active).toBe(1)
+  })
+
+  it('never lets the last one go', () => {
+    const one = normalizeNest(grown('a', 1), now)
+    const r = applyCommand(one, { op: 'release', ...ref(one, 0) }, now)
+    expect(r.result).toBe('last')
+    expect(r.nest).toBe(one)
+  })
+
+  it('starts any pet over from an egg, the old one into the album', () => {
+    const n = three()
+    const r = applyCommand(n, { op: 'restart', ...ref(n, 2) }, now)
+    expect(r.nest.pets[2].xp).toBe(0)
+    expect(r.nest.pets[2].bornAt).toBe(now)
+    expect(r.nest.active).toBe(1)
+    expect(r.nest.pets[1].name).toBe('b')
+    expect(r.nest.pets[0].album.map((a) => a.name)).toEqual(['c'])
+  })
+
+  it('renames and switches by place and birthday', () => {
+    const n = three()
+    expect(applyCommand(n, { op: 'rename', ...ref(n, 0), name: '  mochi  ' }, now).nest.pets[0].name).toBe('mochi')
+    expect(applyCommand(n, { op: 'rename', ...ref(n, 0), name: 'x'.repeat(40) }, now).nest.pets[0].name).toHaveLength(24)
+    expect(applyCommand(n, { op: 'select', ...ref(n, 2) }, now).nest.active).toBe(2)
+  })
+
+  it('refuses a command about a pet that has moved', () => {
+    const n = three()
+    for (const cmd of [
+      { op: 'select', index: 0, bornAt: 2 },
+      { op: 'release', index: 5, bornAt: 1 },
+      { op: 'restart', index: 1, bornAt: 99 },
+      { op: 'rename', index: 0, bornAt: 3, name: 'x' }
+    ] as const) {
+      const r = applyCommand(n, cmd, now)
+      expect(r.result).toBe('stale')
+      expect(r.nest).toBe(n)
+    }
+  })
+
+  it('takes a new egg until the nest is full', () => {
+    let n = three()
+    const r = applyCommand(n, { op: 'adopt', hatch: null }, now)
+    expect(r.result).toBe('ok')
+    expect(r.nest.active).toBe(3)
+    n = r.nest
+    expect(applyCommand(n, { op: 'adopt', hatch: null }, now)).toEqual({ nest: n, result: 'full' })
+  })
+
+  it('sums a nest up for a list elsewhere', () => {
+    const b = briefOf(three(), now)
+    expect(b.active).toBe(1)
+    expect(b.pets.map((p) => [p.name, p.bornAt, p.stage])).toEqual([
+      ['a', 1, 'adult'],
+      ['b', 2, 'adult'],
+      ['c', 3, 'adult']
+    ])
+    expect(b.pets[0].level).toBeGreaterThanOrEqual(1)
   })
 })
 

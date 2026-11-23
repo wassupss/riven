@@ -1249,6 +1249,14 @@ const api = {
     // Borrow the keyboard (renaming); the pet's window is non-focusable so that
     // it can never steal focus on its own.
     focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
+    // Bring riven's window up with Settings open at `tab` (the pet's own window
+    // has no settings of its own).
+    openSettings: (tab: string): Promise<void> => ipcRenderer.invoke('pet:openSettings', tab),
+    onOpenSettings: (cb: (tab: string) => void): (() => void) => {
+      const l = (_e: unknown, tab: string): void => cb(tab)
+      ipcRenderer.on('pet:openSettings', l)
+      return () => ipcRenderer.removeListener('pet:openSettings', l)
+    },
     // Copy a friend-battle code (the pet window cannot use the page clipboard).
     copy: (text: string): Promise<void> => ipcRenderer.invoke('pet:copy', text),
     // A press of the pet's A / B / C, sent from wherever the shortcut fired and

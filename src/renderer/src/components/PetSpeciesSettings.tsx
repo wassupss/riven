@@ -16,7 +16,6 @@ import {
   ROLE_COLOR,
   buildOfDesign,
   cellsOf,
-  designOf,
   familyOfDesign,
   forgetDesign,
   hexToRgb,
@@ -31,8 +30,6 @@ import {
   type PhotoSize,
   type Role
 } from '../state/petSpecies'
-import { MAX_PETS } from '../state/pet'
-import { requestRaise } from '../lib/petRaise'
 import {
   WORK,
   backgroundMask,
@@ -686,8 +683,19 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   )
 }
 
-/** Settings > RivenPet: the keeper's own species, and the way to make one. */
-export default function PetSpeciesSettings(): JSX.Element {
+/**
+ * Settings > 리븐펫 > 내가 만든 종: the keeper's own species, and the way to
+ * make one. "알 받기" on one is the same new egg as the nest's own button, of
+ * that species (PetNestSettings runs it and says what happened).
+ */
+export default function PetSpeciesSettings({
+  full,
+  onRaise
+}: {
+  /** The nest has no room for another egg. */
+  full: boolean
+  onRaise: (s: CustomSpecies) => Promise<string | null>
+}): JSX.Element {
   const t = useT()
   const own = useCustomSpecies((s) => s.own)
   const load = useCustomSpecies((s) => s.load)
@@ -695,21 +703,10 @@ export default function PetSpeciesSettings(): JSX.Element {
   const loaded = useCustomSpecies((s) => s.loaded)
   // null: the list; 'new': making one; otherwise the one being edited.
   const [making, setMaking] = useState<'new' | CustomSpecies | null>(null)
-  // What the last "raise" press did, said under the list.
+  // What the last "알 받기" press did, said under the list.
   const [raised, setRaised] = useState<string | null>(null)
   useEffect(() => void load(), [load])
-  // A fresh egg of this species, brought out now by whichever window shows the pet.
-  const raise = (s: CustomSpecies): void => {
-    void requestRaise({ id: s.id, design: designOf(s) }).then((r) =>
-      setRaised(
-        r === 'ok'
-          ? t('pet.maker.raised', { name: s.name })
-          : r === 'full'
-            ? t('pet.maker.raiseFull', { max: MAX_PETS })
-            : t('pet.maker.raiseNoPet')
-      )
-    )
-  }
+  const raise = (s: CustomSpecies): void => void onRaise(s).then(setRaised)
 
   if (making)
     return <Maker key={making === 'new' ? 'new' : making.id} editing={making === 'new' ? null : making} onDone={() => setMaking(null)} />
@@ -726,9 +723,8 @@ export default function PetSpeciesSettings(): JSX.Element {
             <span className="set-rowdesc">{t(`pet.maker.family.${familyOfDesign(s)}`)}</span>
           </div>
           <div className="set-rowctl">
-            <Button title={t('pet.maker.raiseDesc')} onClick={() => raise(s)}
-            >
-              <Egg size={14} /> {t('pet.maker.raise')}
+            <Button disabled={full} onClick={() => raise(s)}>
+              <Egg size={14} /> {t('pet.nest.adopt')}
             </Button>
             <Button variant="ghost" title={t('pet.maker.edit')} aria-label={t('pet.maker.edit')} onClick={() => setMaking(s)}>
               <Pencil size={14} />
@@ -750,9 +746,7 @@ export default function PetSpeciesSettings(): JSX.Element {
       <div className="set-row">
         <div className="set-rowinfo">
           <span className="set-rowtitle">{t('pet.maker.create')}</span>
-          <span className="set-rowdesc">
-            {own.length >= MAX_CUSTOM ? t('pet.maker.limit', { n: MAX_CUSTOM }) : t('pet.maker.hatchHint')}
-          </span>
+          {own.length >= MAX_CUSTOM && <span className="set-rowdesc">{t('pet.maker.limit', { n: MAX_CUSTOM })}</span>}
         </div>
         <div className="set-rowctl">
           <Button onClick={() => setMaking('new')} disabled={!loaded || own.length >= MAX_CUSTOM}>
