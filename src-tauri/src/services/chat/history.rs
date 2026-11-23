@@ -363,7 +363,7 @@ fn list_desc(dir: &Path) -> Vec<String> {
   v
 }
 
-fn find_rollout(session_id: &str) -> Option<PathBuf> {
+pub(crate) fn find_rollout(session_id: &str) -> Option<PathBuf> {
   static FOUND: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
   let found = FOUND.get_or_init(Default::default);
   if let Some(p) = found.lock().unwrap().get(session_id).filter(|p| p.exists()) {

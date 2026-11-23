@@ -257,7 +257,8 @@ fn route(req: &Request, url: &url::Url, body: Option<Vec<u8>>, conn: &TcpStream)
     // permission card; every connection has its own thread.
     let body = String::from_utf8_lossy(&body.unwrap_or_default()).into_owned();
     let event = query(url, "event").unwrap_or_default();
-    let (status, json) = crate::services::clichat::hook(req.header("x-riven-pane"), &event, &body);
+    let agent = query(url, "agent");
+    let (status, json) = crate::services::clichat::hook(req.header("x-riven-pane"), agent.as_deref(), &event, &body);
     let res = match json {
       Some(b) => Response { status, headers: vec![("content-type", "application/json".into())], body: b.into_bytes() },
       None => Response::empty(status),

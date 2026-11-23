@@ -5,7 +5,7 @@
 export type ChatEngine = 'cli' | 'native'
 
 /** The CLI chat runs these agents; anything else opens headless. */
-export const CLI_CHAT_AGENTS: ReadonlyArray<string> = ['claude']
+export const CLI_CHAT_AGENTS: ReadonlyArray<string> = ['claude', 'codex']
 
 /** An explicit choice wins, then the setting; an agent the CLI chat cannot run is headless. */
 export function chatEngine(

@@ -15,10 +15,18 @@ export const MODE_KEY: Record<string, string> = {
   default: 'chat.mode.ask',
   acceptEdits: 'chat.mode.acceptEdits',
   plan: 'chat.mode.plan',
-  auto: 'clichat.mode.auto'
+  auto: 'clichat.mode.auto',
+  bypassPermissions: 'clichat.mode.codexFull'
 }
 
+/**
+ * Codex's modes, as the sandbox + approval policy services/clichat/codex.rs
+ * maps them to: workspace-write asking on request, read-only, full access.
+ */
+export const CODEX_MODES = ['acceptEdits', 'plan', 'bypassPermissions'] as const
+
 export default function Header({
+  cli = 'claude',
   state,
   title,
   usedModel,
@@ -32,6 +40,7 @@ export default function Header({
   onTerminal,
   onRestart
 }: {
+  cli?: 'claude' | 'codex'
   state: CliState
   title: string | null
   /** The model the last reply came from, per the transcript. */
@@ -62,8 +71,10 @@ export default function Header({
               ? t('clichat.working')
               : ''
   const bg = state.background?.filter((b) => b.status !== 'completed') ?? []
-  const shownMode = modeValue(state.mode ?? mode)
-  const modes: string[] = MODES.includes(shownMode as (typeof MODES)[number]) ? [...MODES] : [...MODES, shownMode]
+  const codex = cli === 'codex'
+  const shownMode = codex ? mode : modeValue(state.mode ?? mode)
+  const base: readonly string[] = codex ? CODEX_MODES : MODES
+  const modes: string[] = base.includes(shownMode) ? [...base] : [...base, shownMode]
   return (
     <div className="cli-chat-bar">
       <span
@@ -104,11 +115,14 @@ export default function Header({
         title={usedModel ? t('clichat.modelUsed', { model: prettyModelId(usedModel) }) : t('chat.modelTitle')}
         onChange={(e) => onModel(e.target.value)}
       >
-        <ModelOptions cli="claude" configDir={configDir} current={model} />
+        <ModelOptions cli={cli} configDir={configDir} current={model} />
       </select>
-      <button className={`cli-chat-btn${sessionsOpen ? ' primary' : ''}`} onClick={onSessions} title={t('chat.resumeTitle')}>
-        <History size={13} />
-      </button>
+      {/* The session list reads Claude Code's projects; Codex has none here. */}
+      {!codex && (
+        <button className={`cli-chat-btn${sessionsOpen ? ' primary' : ''}`} onClick={onSessions} title={t('chat.resumeTitle')}>
+          <History size={13} />
+        </button>
+      )}
       {state.dead ? (
         <button className="cli-chat-btn" onClick={onRestart}>
           <RotateCcw size={13} /> {t('clichat.restart')}

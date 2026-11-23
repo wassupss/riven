@@ -915,6 +915,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Model (a change restarts the CLI on this conversation; global settings untouched). Last reply: {model}'
   },
   'clichat.mode.auto': { ko: '자동 모드', en: 'Auto mode' },
+  'clichat.mode.codexFull': { ko: '전체 접근 (승인 없음)', en: 'Full access (no approvals)' },
   'clichat.session.new': { ko: '새 대화', en: 'New conversation' },
   'clichat.session.current': { ko: '지금 대화', en: 'current' },
   'clichat.menu.title': { ko: 'CLI가 선택을 기다립니다', en: 'The CLI is waiting for a choice' },

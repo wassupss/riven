@@ -8,7 +8,7 @@ import { buildTurns, initialModel, lastModel, MODES, modeValue, reduce, type Age
 import { TurnView } from './clichat/TurnView'
 import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from './clichat/Cards'
 import Composer, { type ComposerHandle } from './clichat/Composer'
-import Header, { MODE_KEY } from './clichat/Header'
+import Header, { CODEX_MODES, MODE_KEY } from './clichat/Header'
 import { useClaudeCatalog } from '../../state/modelCatalog'
 import { modelLabel, modelsFor, pinnedModels } from '../../lib/models'
 import SessionPicker from './clichat/SessionPicker'
@@ -19,11 +19,12 @@ import { takeInitialText } from '../registry'
 import AskInline from './AskInline'
 import '../../styles/cli-chat.css'
 
-// Experimental CLI chat: the REAL interactive `claude`, run by Rust in a
-// hidden pty (services/clichat), drawn as a chat from its transcript. The
-// regular ChatPanel (headless driver) is untouched. Questions, plan approval
-// and the trust dialog are answered from cards here; anything else is
-// answered in the terminal view, which shows the same pty.
+// The CLI chat: the REAL interactive `claude` or `codex`, run by Rust in a
+// hidden pty (services/clichat), drawn as a chat from its transcript. A chat
+// pane whose pane state says engine 'cli' is drawn by this (Workbench); the
+// headless ChatPanel stays for the panes made before. Questions, plan
+// approval, Codex's approvals and the trust dialogs are answered from cards
+// here; anything else in the terminal view, which shows the same pty.
 
 export interface CliChatParams {
   chatKey: string
@@ -57,6 +58,8 @@ export default function CliChatPanel({
   const [epoch, setEpoch] = useState(0) // bumped by "restart"
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const pane0 = useMemo(() => loadPaneState(workspace, key), [workspace, key])
+  // Which CLI runs here (pane state, set when the pane was made).
+  const cli: 'claude' | 'codex' = pane0.cli === 'codex' ? 'codex' : 'claude'
   const [pickedModel, setPickedModel] = useState(pane0.model || getSettings().defaultChatModel || 'default')
   const [pickedMode, setPickedMode] = useState(pane0.mode || getSettings().defaultPermissionMode || 'acceptEdits')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -93,6 +96,7 @@ export default function CliChatPanel({
       autocompact: st.autocompact,
       globalPrompt: persona ? [st.globalPrompt?.trim(), persona].filter(Boolean).join('\n\n') : st.globalPrompt,
       agent: params.agent || pane0.agent || undefined,
+      cli,
       ...extra
     }
   }
@@ -156,9 +160,10 @@ export default function CliChatPanel({
     atBottom.current = true
     window.api.cliChat.send(key, text, [])
   }
-  const titleRef = useRef(pinned || t('clichat.title'))
+  const fallbackTitle = cli === 'codex' ? 'Codex' : t('clichat.title')
+  const titleRef = useRef(pinned || fallbackTitle)
   useEffect(() => {
-    titleRef.current = api.title || pinned || t('clichat.title')
+    titleRef.current = api.title || pinned || fallbackTitle
   })
   useEffect(
     () =>
@@ -238,18 +243,21 @@ export default function CliChatPanel({
   }, [key])
 
   // What the phone sees and changes: the same choices as the header.
-  const catalog = useClaudeCatalog(configDir)
+  const catalog = useClaudeCatalog(cli === 'codex' ? undefined : configDir)
   const remoteRef = useRef<NonNullable<AgentController['remote']>>(null!)
   remoteRef.current = {
     info: () => ({
-      cli: 'claude',
+      cli,
       model: pickedModel,
-      mode: modeValue(state.mode ?? pickedMode),
-      models: [...modelsFor('claude'), ...pinnedModels(catalog).map((p) => p.value)].map((v) => ({
-        value: v,
-        label: modelLabel(v, catalog)
-      })),
-      modes: MODES.map((m) => ({ value: m, label: t(MODE_KEY[m]) }))
+      mode: cli === 'codex' ? pickedMode : modeValue(state.mode ?? pickedMode),
+      models:
+        cli === 'codex'
+          ? modelsFor('codex').map((v) => ({ value: v, label: v }))
+          : [...modelsFor('claude'), ...pinnedModels(catalog).map((p) => p.value)].map((v) => ({
+              value: v,
+              label: modelLabel(v, catalog)
+            })),
+      modes: (cli === 'codex' ? CODEX_MODES : MODES).map((m) => ({ value: m, label: t(MODE_KEY[m]) }))
     }),
     setModel: pickModel,
     setMode: pickMode,
@@ -275,6 +283,7 @@ export default function CliChatPanel({
       }}
     >
       <Header
+        cli={cli}
         state={state}
         title={model.title}
         usedModel={usedModel}

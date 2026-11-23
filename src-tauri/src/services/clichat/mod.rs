@@ -30,6 +30,7 @@
 
 pub mod agents;
 pub mod attach;
+pub mod codex;
 pub mod hooks;
 pub mod life;
 pub mod preview;
@@ -107,6 +108,14 @@ pub struct StartOpts {
   pub autocompact: Option<String>,
   pub global_prompt: Option<String>,
   pub agent: Option<String>,
+  /// "codex" runs the interactive codex (codex.rs); anything else claude.
+  pub cli: Option<String>,
+}
+
+impl StartOpts {
+  pub fn is_codex(&self) -> bool {
+    self.cli.as_deref() == Some("codex")
+  }
 }
 
 /// What the launch adds to the command line besides `StartOpts`.
@@ -204,6 +213,9 @@ struct Sess {
   agents_polled: Instant,
   /// Messages are typed one after another, never interleaved.
   typing: Arc<tokio::sync::Mutex<()>>,
+  /// Codex: its rollout is read through this (codex.rs), and the session
+  /// id of a new conversation arrives with SessionStart.
+  codex: Option<codex::Translator>,
 }
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -375,6 +387,9 @@ pub async fn start(label: String, key: String, opts: StartOpts) -> Result<Value,
 }
 
 fn transcript_exists(opts: &StartOpts, id: &str) -> bool {
+  if opts.is_codex() {
+    return crate::services::chat::history::find_rollout(id).is_some();
+  }
   transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), id).is_file() || transcript::find_by_id(opts.config_dir.as_deref(), id).is_some()
 }
 
@@ -393,13 +408,36 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
   // starts fresh under the same id.
   let resume_from = resume.clone().filter(|r| transcript_exists(&opts, r));
   let fork = opts.fork == Some(true) && resume_from.is_some();
-  let session_id = if fork { crate::services::chat::util::uuid() } else { resume.clone().unwrap_or_else(crate::services::chat::util::uuid) };
-  let settings = settings_file()?;
-  let (extras, flags) = launch_env(&key, &opts).await;
-  let real = extras.get("RIVEN_REAL_CLAUDE").cloned();
-  let cmd = command_line(real.as_deref(), &flags, &settings.to_string_lossy(), &opts, &session_id, resume_from.as_deref(), fork);
-  let path = transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), &session_id);
-  let bin_path = real.map(PathBuf::from).or_else(|| crate::services::shell_env::which("claude"));
+  let codex = opts.is_codex();
+  // Codex names a new conversation (and a fork) itself: its id comes with
+  // the SessionStart hook.
+  let session_id = match (codex, fork) {
+    (true, true) => String::new(),
+    (true, false) => resume_from.clone().unwrap_or_default(),
+    (false, true) => crate::services::chat::util::uuid(),
+    (false, false) => resume.clone().unwrap_or_else(crate::services::chat::util::uuid),
+  };
+  let (cmd, path, real) = if codex {
+    let (extras, extra) = codex_env(&key, &opts).await;
+    let real = extras.get("RIVEN_REAL_CODEX").cloned();
+    let start = match (&resume_from, fork) {
+      (Some(id), true) => codex::Start::Fork(id),
+      (Some(id), false) => codex::Start::Resume(id),
+      (None, _) => codex::Start::New,
+    };
+    let cmd = codex::command_line(real.as_deref(), &start, opts.model.as_deref(), opts.permission_mode.as_deref(), &extra);
+    let path = resume_from.as_deref().filter(|_| !fork).and_then(crate::services::chat::history::find_rollout).unwrap_or_default();
+    (cmd, path, (extras, real))
+  } else {
+    let settings = settings_file()?;
+    let (extras, flags) = launch_env(&key, &opts).await;
+    let real = extras.get("RIVEN_REAL_CLAUDE").cloned();
+    let cmd = command_line(real.as_deref(), &flags, &settings.to_string_lossy(), &opts, &session_id, resume_from.as_deref(), fork);
+    let path = transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), &session_id);
+    (cmd, path, (extras, real))
+  };
+  let (extras, real) = real;
+  let bin_path = real.map(PathBuf::from).or_else(|| crate::services::shell_env::which(if codex { "codex" } else { "claude" }));
   let kept = StartOpts { resume: None, fork: None, ..opts.clone() };
   let now = Instant::now();
   let sess = Arc::new(Mutex::new(Sess {
@@ -439,6 +477,7 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
     updated: false,
     agents_polled: now,
     typing: Arc::new(tokio::sync::Mutex::new(())),
+    codex: codex.then(codex::Translator::default),
   }));
   all().insert(key.clone(), sess.clone());
   {
@@ -485,6 +524,34 @@ async fn launch_env(key: &str, opts: &StartOpts) -> (HashMap<String, String>, Fl
   let base = crate::services::chat::allowed_base(&opts.tools_denied);
   let allowed = crate::services::chat::mcp::allowed_tools_value(&base, crate::services::mcp::TOOL_PREFIX, &external, &[]);
   (extras, Flags { mcp, prompt: prompt.is_some(), allowed: Some(allowed) })
+}
+
+/// The environment and -c values of a Codex CLI chat: its hooks to the
+/// /clichat route, riven's MCP server without the tools switched off, and the
+/// developer instructions (riven's tool guide and the person's prompt),
+/// unless the person set their own in ~/.codex/config.toml (as the terminal
+/// shim does).
+async fn codex_env(key: &str, opts: &StartOpts) -> (HashMap<String, String>, Vec<String>) {
+  let mut extras = crate::services::mcp::pty_env(key).await;
+  if let Some(base) = crate::services::mcp::base_url() {
+    extras.insert("RIVEN_CLICHAT_URL".into(), format!("{base}/clichat"));
+  }
+  if !extras.contains_key("RIVEN_REAL_CODEX") {
+    if let Some(p) = crate::services::mcp::shim::real_bin("codex").await {
+      extras.insert("RIVEN_REAL_CODEX".into(), p);
+    }
+  }
+  let env = crate::services::mcp::chat_env("codex", key, &opts.mcp_disabled.clone().unwrap_or_default());
+  let url = env.get("url").and_then(Value::as_str);
+  if let Some(t) = env.get("token").and_then(Value::as_str) {
+    extras.insert("RIVEN_MCP_TOKEN".into(), t.to_string());
+  }
+  let timeout = env.get("timeoutSec").and_then(Value::as_u64).unwrap_or(600);
+  let own = crate::services::mcp::shim::user_has_codex_instructions();
+  let instructions = (!own).then(|| system_prompt(env.get("prompt").and_then(Value::as_str), opts.global_prompt.as_deref())).flatten();
+  let mut extra = codex::hook_overrides();
+  extra.extend(codex::mcp_overrides(url, timeout, instructions.as_deref()));
+  (extras, extra)
 }
 
 /// Stop the process of a pane but keep nothing else: the half of a restart
@@ -580,6 +647,36 @@ fn park(st: &mut Sess) {
 
 // New transcript lines into the store (no event yet: pump sends the delta).
 fn pump_transcript(st: &mut Sess) {
+  if st.codex.is_some() {
+    // The rollout is known from SessionStart (or the resume); its lines go
+    // through the translator into the same store.
+    if st.tail.path.is_file() {
+      let chunk = st.tail.read();
+      let tr = st.codex.as_mut().expect("codex");
+      match chunk {
+        Ok(Chunk::Lines(lines)) => {
+          for l in lines {
+            for r in tr.translate(&l) {
+              st.store.ingest(&r);
+            }
+          }
+        }
+        Ok(Chunk::Restarted(lines)) => {
+          *tr = codex::Translator::default();
+          st.store = Store::default();
+          for l in lines {
+            for r in tr.translate(&l) {
+              st.store.ingest(&r);
+            }
+          }
+          st.sent.clear();
+          st.fresh = true;
+        }
+        Err(_) => {}
+      }
+    }
+    return;
+  }
   if !st.tail.path.is_file() {
     // Long cwds get a hashed folder name: find the session by its id.
     if st.started.elapsed() > Duration::from_secs(3) {
@@ -661,12 +758,14 @@ fn pump(st: &mut Sess) {
   // 4. The screen: is the CLI up, or is it asking something only the
   // terminal view (or a menu card) can answer?
   let screen = crate::services::pty::screen_text(&st.key);
+  let extract = if st.codex.is_some() { codex::extract } else { preview::extract };
   if landed_now {
-    st.landed = screen.as_deref().and_then(preview::extract);
+    st.landed = screen.as_deref().and_then(extract);
   }
   if let Some(screen) = &screen {
-    let boxed = preview::has_input_box(screen);
-    let mut blocked = preview::blocked(screen);
+    let codex = st.codex.is_some();
+    let boxed = if codex { codex::has_input_box(screen) } else { preview::has_input_box(screen) };
+    let mut blocked = if codex { codex::blocked(screen) } else { preview::blocked(screen) };
     if boxed {
       st.box_seen = true;
       st.menu_since = None;
@@ -696,7 +795,7 @@ fn pump(st: &mut Sess) {
   }
   // 5. The reply in flight.
   if st.busy {
-    let from_screen = screen.as_deref().and_then(preview::extract).filter(|t| st.landed.as_deref() != Some(t.as_str()));
+    let from_screen = screen.as_deref().and_then(extract).filter(|t| st.landed.as_deref() != Some(t.as_str()));
     let from_hook = st.shown.as_ref().map(|(_, t)| t.clone()).filter(|t| !t.trim().is_empty());
     // The screen is ahead of the hook (it has the line being written); the
     // hook is right when the screen heuristic finds nothing.
@@ -879,8 +978,9 @@ pub fn rename(key: &str, title: &str) -> bool {
     return false;
   }
   let Some(s) = get(key) else { return false };
-  let parked = lock(&s).parked;
-  if parked {
+  let (parked, codex) = { let st = lock(&s); (st.parked, st.codex.is_some()) };
+  // Codex has no /rename.
+  if parked || codex {
     return false;
   }
   send(key, format!("/rename {name}"), Vec::new());
@@ -1000,12 +1100,13 @@ fn settle(st: &mut Sess, call: Option<(&str, &Value)>) {
 /// X-Riven-Pane header). Returns the status and an optional JSON body. Runs
 /// on the connection's own thread, so a permission request may block here
 /// until the person answers.
-pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>) {
+pub fn hook(pane: Option<&str>, agent: Option<&str>, event: &str, body: &str) -> (u16, Option<String>) {
   let Some(pane) = pane.filter(|p| !p.is_empty()) else { return (204, None) };
   // What a terminal agent's hooks feed (activity, notifications, the
   // changes timeline) runs for this pane as well.
   if hooks::forwarded(event) {
-    if let Ok(url) = url::Url::parse(&format!("http://127.0.0.1/hook?pane={}&event={event}", urlencode(pane))) {
+    let who = if agent == Some("codex") { "&agent=codex" } else { "" };
+    if let Ok(url) = url::Url::parse(&format!("http://127.0.0.1/hook?pane={}&event={event}{who}", urlencode(pane))) {
       let (_res, after) = crate::services::mcp::hooks::handle(&url, body);
       if let Some(after) = after {
         after();
@@ -1019,7 +1120,9 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
   // Subagent hooks (agent_id set) describe the subagent's tools, not the
   // main conversation's state.
   let sub = payload.get("agent_id").is_some_and(|a| !a.is_null());
-  if let Some(m) = payload.get("permission_mode").and_then(Value::as_str).filter(|_| !sub) {
+  // (Codex reports "default" whatever its sandbox: the pane's own pick is
+  // the mode there.)
+  if let Some(m) = payload.get("permission_mode").and_then(Value::as_str).filter(|_| !sub && st.codex.is_none()) {
     if st.mode.as_deref() != Some(m) {
       st.mode = Some(m.to_string());
       emit_state(&st);
@@ -1128,10 +1231,26 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
     }
     _ => {}
   }
+  // Codex: a new conversation (or a fork) learns its id here.
+  if st.codex.is_some() && !sub {
+    if let Some(id) = payload.get("session_id").and_then(Value::as_str).filter(|i| transcript::is_uuid(i)) {
+      if st.session_id != id {
+        st.session_id = id.to_string();
+        emit_state(&st);
+      }
+    }
+  }
   // The CLI reports where it actually writes the transcript.
   if let Some(p) = payload.get("transcript_path").and_then(Value::as_str) {
     let p = PathBuf::from(p);
-    if p != st.tail.path && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&st.session_id)) {
+    let named = |n: &std::ffi::OsStr| {
+      let n = n.to_string_lossy();
+      !st.session_id.is_empty() && if st.codex.is_some() { n.contains(&st.session_id) } else { n.starts_with(&st.session_id) }
+    };
+    if p != st.tail.path && p.file_name().is_some_and(named) {
+      if let Some(tr) = st.codex.as_mut() {
+        *tr = codex::Translator::default();
+      }
       st.agents = agents::Agents::new(&p);
       st.tail = Tail::new(p);
       st.store = Store::default();

@@ -100,7 +100,7 @@ fn server(sh: Arc<Mutex<Shared>>) -> u16 {
           if r.read_exact(&mut body).is_err() {
             return;
           }
-          let event = target.split("event=").nth(1).unwrap_or("").to_string();
+          let event = target.split("event=").nth(1).unwrap_or("").split('&').next().unwrap_or("").to_string();
           let body = String::from_utf8_lossy(&body).into_owned();
           let answer = {
             let mut g = sh.lock().unwrap();
@@ -166,14 +166,56 @@ fn probe() {
       extra.extend(a.split_whitespace().map(str::to_string));
     }
   }
-  if !extra.iter().any(|a| a == "--resume" || a == "--session-id") {
+  // RIVEN_PROBE_CLI=codex: the interactive codex instead, with the hooks
+  // as -c overrides (command hooks that POST to the same server and print
+  // its answer), no MCP servers, no prompt history, the cheapest model, and
+  // hook trust bypassed for this run only (nothing is persisted).
+  let codex = std::env::var("RIVEN_PROBE_CLI").as_deref() == Ok("codex");
+  if !codex && !extra.iter().any(|a| a == "--resume" || a == "--session-id") {
     extra.push("--session-id".into());
     extra.push(crate::services::chat::util::uuid());
   }
   let vt = Arc::new(Mutex::new(Vt::new(super::COLS, super::ROWS, 2000).unwrap()));
   let pair = native_pty_system().openpty(PtySize { rows: super::ROWS, cols: super::COLS, pixel_width: 0, pixel_height: 0 }).unwrap();
-  let mut cmd = CommandBuilder::new("claude");
-  cmd.args(["--strict-mcp-config", "--mcp-config", EMPTY_MCP, "--settings", &settings.to_string_lossy(), "--model", "haiku"]);
+  // RIVEN_PROBE_CLI=codex-product: the command line the CLI chat itself
+  // builds (codex::command_line with its hooks), run through a shell as
+  // the hidden pty runs it, plus the probe's safety flags.
+  let product = std::env::var("RIVEN_PROBE_CLI").as_deref() == Ok("codex-product");
+  let mut cmd = if product {
+    let mut extra_c = super::codex::hook_overrides();
+    extra_c.extend(["model_reasoning_effort=\"low\"", "history.persistence=\"none\"", "mcp_servers={}", "tui.screen_reader_detection_done=true"].map(String::from));
+    extra_c.extend(extra.iter().filter_map(|a| a.strip_prefix("c:").map(str::to_string)));
+    let resume = std::env::var("RIVEN_PROBE_RESUME").ok();
+    let start = resume.as_deref().map(super::codex::Start::Resume).unwrap_or(super::codex::Start::New);
+    let line = super::codex::command_line(None, &start, Some("gpt-5.6-luna"), Some("plan"), &extra_c);
+    let mut c = CommandBuilder::new("/bin/zsh");
+    c.args(["-c", &format!("exec {line} --dangerously-bypass-hook-trust")]);
+    c.env("RIVEN_CLICHAT_URL", format!("http://127.0.0.1:{port}/clichat"));
+    extra.clear();
+    c
+  } else if codex {
+    let mut c = CommandBuilder::new("codex");
+    let mut pre: Vec<String> = Vec::new();
+    // `resume <id>` is a subcommand: it goes first.
+    if let Some(i) = extra.iter().position(|a| a == "resume") {
+      pre = extra.drain(i..(i + 2).min(extra.len())).collect();
+    }
+    c.args(&pre);
+    for o in super::codex::probe_overrides(&format!("http://127.0.0.1:{port}")) {
+      c.args(["-c", &o]);
+    }
+    c.args(["-m", "gpt-5.6-luna", "-c", "model_reasoning_effort=\"low\"", "-c", "history.persistence=\"none\"", "-c", "mcp_servers={}", "-c", "check_for_update_on_startup=false", "-c", "tui.screen_reader_detection_done=true"]);
+    // RIVEN_PROBE_HOOK_TRUST=ask: leave hook trust to the CLI, to see what
+    // it shows (never answered for real).
+    if std::env::var("RIVEN_PROBE_HOOK_TRUST").as_deref() != Ok("ask") {
+      c.arg("--dangerously-bypass-hook-trust");
+    }
+    c
+  } else {
+    let mut c = CommandBuilder::new("claude");
+    c.args(["--strict-mcp-config", "--mcp-config", EMPTY_MCP, "--settings", &settings.to_string_lossy(), "--model", "haiku"]);
+    c
+  };
   cmd.args(&extra);
   cmd.cwd(&cwd);
   for (k, _) in std::env::vars() {
@@ -183,6 +225,9 @@ fn probe() {
   }
   cmd.env("TERM", "xterm-256color");
   cmd.env("RIVEN_PANE", "probe");
+  if product {
+    cmd.env("RIVEN_CLICHAT_URL", format!("http://127.0.0.1:{port}/clichat"));
+  }
   cmd.env("RIVEN_HOOK_TOKEN", "probe-token");
   let mut child = pair.slave.spawn_command(cmd).unwrap();
   drop(pair.slave);
@@ -297,5 +342,20 @@ fn probe() {
   let _ = rd.join();
   std::fs::write(out.join("screens.txt"), screens).unwrap();
   std::fs::write(out.join("events.jsonl"), sh.lock().unwrap().events.join("\n") + "\n").unwrap();
+  // Codex: the rollout through the translator, as kinds only (no text).
+  if codex || product {
+    let path = sh.lock().unwrap().events.iter().find_map(|e| serde_json::from_str::<serde_json::Value>(e).ok()?.pointer("/body/transcript_path")?.as_str().map(str::to_string));
+    if let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) {
+      let mut tr = super::codex::Translator::default();
+      let mut st = super::transcript::Store::default();
+      for l in text.lines() {
+        for r in tr.translate(l) {
+          st.ingest(&r);
+        }
+      }
+      let kinds: Vec<String> = st.branch().iter().map(|i| serde_json::to_value(i).ok().and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_string)).unwrap_or_default()).collect();
+      std::fs::write(out.join("items.txt"), kinds.join("\n") + "\n").unwrap();
+    }
+  }
   println!("probe done, exited cleanly: {exited}, args: {}", extra.join(" "));
 }

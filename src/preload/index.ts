@@ -154,6 +154,8 @@ export interface CliChatStartOpts {
   autocompact?: string
   globalPrompt?: string
   agent?: string
+  /** 'codex' runs the interactive codex; claude otherwise. */
+  cli?: 'claude' | 'codex'
 }
 
 export interface CliUpdateState {

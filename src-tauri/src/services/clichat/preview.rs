@@ -140,7 +140,8 @@ pub struct MenuOption {
 // "❯ 2. Banana" / "  3. Tell Claude what to change" -> (selected, 2, label)
 fn option_line(line: &str) -> Option<(bool, u32, &str)> {
   let t = line.trim_start();
-  let (sel, t) = match t.strip_prefix(PROMPT) {
+  // The highlighted row: ❯ (Claude Code) or › (Codex).
+  let (sel, t) = match t.strip_prefix(PROMPT).or_else(|| t.strip_prefix('›')) {
     Some(r) => (true, r.trim_start()),
     None => (false, t),
   };
@@ -155,7 +156,9 @@ fn option_line(line: &str) -> Option<(bool, u32, &str)> {
 
 fn input_label(label: &str) -> bool {
   let l = label.to_lowercase();
-  l.contains("tell claude") || l.contains("type something") || l.contains("what to do differently")
+  // Not Codex's "No, and tell Codex what to do differently (esc)": that row
+  // cancels, and its menu takes letters as shortcuts, so nothing is typed.
+  !l.contains("tell codex") && (l.contains("tell claude") || l.contains("type something") || l.contains("what to do differently"))
 }
 
 /// The last numbered menu on the screen (1, 2, 3... in order, description

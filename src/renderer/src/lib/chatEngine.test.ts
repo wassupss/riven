@@ -13,6 +13,8 @@ describe('chatEngine', () => {
   })
   it('an agent the CLI chat cannot run stays headless', () => {
     expect(chatEngine('codex', 'cli', 'cli', ['claude'])).toBe('native')
+    expect(chatEngine('codex', undefined, 'cli')).toBe('cli')
+    expect(chatEngine('aider', 'cli', 'cli')).toBe('native')
     expect(chatEngine('codex', undefined, 'cli', ['claude', 'codex'])).toBe('cli')
   })
 })

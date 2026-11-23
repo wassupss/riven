@@ -27,7 +27,7 @@
 
 mod http;
 pub mod hooks;
-mod shim;
+pub(crate) mod shim;
 
 use crate::services::chat::util;
 use serde_json::{json, Map, Value};
