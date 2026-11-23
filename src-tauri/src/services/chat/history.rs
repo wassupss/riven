@@ -4,8 +4,10 @@
 // CLI's /rename appends, and a delete removes the transcript file.
 //
 // Claude stores each session as <config>/projects/<encoded-cwd>/<id>.jsonl,
-// where the cwd's "/" and "." become "-". <config> is CLAUDE_CONFIG_DIR when
-// the pane runs under a profile, else ~/.claude.
+// where every character of the cwd that is not an ASCII letter or digit
+// becomes "-" (a cwd longer than the CLI's limit is cut and gets a hash
+// suffix, found by prefix). <config> is CLAUDE_CONFIG_DIR when the pane runs
+// under a profile, else ~/.claude.
 
 use super::util::{clamp, home, js_string, mtime_ms, slice, truthy};
 use serde::Serialize;
@@ -15,13 +17,33 @@ use std::io::{BufRead, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// The CLI's folder name for a cwd: every char that is not [A-Za-z0-9] is
+/// "-" ("/a_b c" -> "-a-b-c"). Folding only "/" and "." (what this did
+/// before) missed every cwd with "_", " ", "~" or non-ASCII in it.
+pub fn encode_cwd(cwd: &str) -> String {
+  cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+/// Past this many chars the CLI cuts the folder name and appends a hash of
+/// the full path; the hash is the CLI's own, so such a folder is found by
+/// its prefix instead.
+const MAX_DIR_NAME: usize = 200;
+
 pub fn project_dir(cwd: &str, config_dir: Option<&str>) -> PathBuf {
   let base = match config_dir.filter(|d| !d.is_empty()) {
     Some(d) => PathBuf::from(d),
     None => home().join(".claude"),
   };
-  let enc: String = cwd.chars().map(|c| if c == '/' || c == '.' { '-' } else { c }).collect();
-  base.join("projects").join(enc)
+  let projects = base.join("projects");
+  let enc = encode_cwd(cwd);
+  if enc.len() <= MAX_DIR_NAME {
+    return projects.join(enc);
+  }
+  let prefix = format!("{}-", &enc[..MAX_DIR_NAME]);
+  let found = std::fs::read_dir(&projects)
+    .ok()
+    .and_then(|rd| rd.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&prefix))));
+  found.unwrap_or_else(|| projects.join(enc))
 }
 
 // ---- titles (sessionTitle.ts) --------------------------------------------------
@@ -48,7 +70,8 @@ pub fn scan_line(out: &mut TitleScan, line: &str) {
     }
   }
   if out.ai.is_empty() && ty == "ai-title" {
-    if let Some(t) = j.get("title").and_then(Value::as_str).filter(|t| !js_trim(t).is_empty()) {
+    // 2.1.x writes "aiTitle"; older builds wrote "title".
+    if let Some(t) = j.get("aiTitle").or_else(|| j.get("title")).and_then(Value::as_str).filter(|t| !js_trim(t).is_empty()) {
       out.ai = js_trim(t).to_string();
     }
   }
@@ -519,6 +542,30 @@ mod tests {
     scan_line(&mut s, r#"{"type":"custom-title","customTitle":"Mine"}"#);
     assert_eq!(title_of(&s, 2), "Mi…");
     assert_eq!(s.messages, 1);
+  }
+
+  #[test]
+  fn cwd_encoding_matches_the_cli() {
+    // Folders as 2.1.330 names them (seen on disk): every non-alphanumeric
+    // char is "-", so "_", " " and non-ASCII fold too.
+    assert_eq!(encode_cwd("/private/tmp/a_b.c/ws"), "-private-tmp-a-b-c-ws");
+    assert_eq!(encode_cwd("/Users/me/my project~2"), "-Users-me-my-project-2");
+    assert_eq!(encode_cwd("/tmp/한글"), "-tmp---");
+    assert_eq!(project_dir("/w/x.y", Some("/cfg")), PathBuf::from("/cfg/projects/-w-x-y"));
+    let mut s = TitleScan::default();
+    scan_line(&mut s, r#"{"type":"ai-title","aiTitle":"New shape"}"#);
+    assert_eq!(title_of(&s, 60), "New shape");
+  }
+
+  #[test]
+  fn long_cwd_is_found_by_prefix() {
+    let base = std::env::temp_dir().join(format!("riven-hist-{}", std::process::id()));
+    let cwd = format!("/{}", "a".repeat(260));
+    let enc = encode_cwd(&cwd);
+    let dir = base.join("projects").join(format!("{}-1x2y3z", &enc[..MAX_DIR_NAME]));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert_eq!(project_dir(&cwd, Some(&base.to_string_lossy())), dir);
+    let _ = std::fs::remove_dir_all(&base);
   }
 
   #[test]

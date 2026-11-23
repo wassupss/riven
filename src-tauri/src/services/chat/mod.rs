@@ -16,7 +16,7 @@
 pub mod claude;
 mod cli;
 pub mod codex;
-mod history;
+pub(crate) mod history;
 mod mcp;
 mod tools;
 pub mod util;
