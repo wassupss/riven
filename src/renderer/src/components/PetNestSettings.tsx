@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { PawPrint, Pencil, RotateCcw, Undo2 } from 'lucide-react'
+import { LayoutGrid, PawPrint, Pencil, RotateCcw, Undo2 } from 'lucide-react'
 import { useT } from '../i18n'
 import { onNest, requestPet } from '../lib/petCommand'
 import {
@@ -19,6 +19,8 @@ import { useSettings } from '../state/settings'
 import { Button, Select } from './ui/Controls'
 import { Creature } from './PetDevice'
 import PetSpeciesSettings from './PetSpeciesSettings'
+import PetLayoutEditor from './PetLayoutEditor'
+import { useUI } from '../state/ui'
 import { promptInput } from './promptInput'
 
 // ---------------------------------------------------------------------------
@@ -50,6 +52,16 @@ export default function PetNestSettings(): JSX.Element {
   const [note, setNote] = useState<string | null>(null)
   const [pick, setPick] = useState<string>('')
   const own = useCustomSpecies((s) => s.own)
+  // The decoration layout of the pet that is out, open below the list.
+  const [layoutOpen, setLayoutOpen] = useState(false)
+  const layoutAsk = useUI((s) => s.petLayoutAsk)
+  const layoutRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (layoutAsk) setLayoutOpen(true)
+  }, [layoutAsk])
+  useEffect(() => {
+    if (layoutOpen) layoutRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [layoutOpen])
 
   const take = useCallback((b: NestBrief | null) => {
     if (!b) return
@@ -135,7 +147,12 @@ export default function PetNestSettings(): JSX.Element {
           </div>
           <div className="set-rowctl">
             {i === nest.active ? (
-              <span className="pet-nest-shown">{t('pet.nest.shown')}</span>
+              <>
+                <span className="pet-nest-shown">{t('pet.nest.shown')}</span>
+                <Button onClick={() => setLayoutOpen((o) => !o)} aria-expanded={layoutOpen}>
+                  <LayoutGrid size={14} /> {t('pet.layout.open')}
+                </Button>
+              </>
             ) : (
               <Button onClick={() => void run({ op: 'select', ...ref(i) })}>{t('pet.nest.show')}</Button>
             )}
@@ -181,6 +198,18 @@ export default function PetNestSettings(): JSX.Element {
         </div>
       </div>
       {note && <div className="set-note">{note}</div>}
+      {layoutOpen && nest?.pets[nest.active] && (
+        <div ref={layoutRef}>
+          <div className="section-label">
+            {t('pet.layout.title', { name: petTitle(nest.pets[nest.active], t) })}
+          </div>
+          <PetLayoutEditor
+            pet={nest.pets[nest.active]}
+            onClose={() => setLayoutOpen(false)}
+            onSave={async (worn, layout) => (await run({ op: 'decor', ...ref(nest.active), worn, layout })) === 'ok'}
+          />
+        </div>
+      )}
 
       <div className="section-label">{t('pet.species.custom')}</div>
       <PetSpeciesSettings

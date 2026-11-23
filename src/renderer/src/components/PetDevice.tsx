@@ -56,6 +56,7 @@ import {
   type Species
 } from '../state/pet'
 import { STATS, XP_TOKENS, decorationsOf, nextDecoration, statsOf, topStat } from '../state/petLevel'
+import { layoutKey, type DecorLayout } from '../state/petLayout'
 import { customOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
 import { PHOTO_DOT } from './petCustomArt'
 import { cardOf, encodeCard, fight, isUpset, noteCard, readCode, type BattleCard, type Bout } from '../state/petBattle'
@@ -210,7 +211,9 @@ export function Creature({
   flavor,
   cheer,
   level = 0,
-  outfit: wearing
+  outfit: wearing,
+  layout,
+  still
 }: {
   species: Species
   mood: Mood
@@ -222,6 +225,10 @@ export function Creature({
   level?: number
   /** What it has on (outfitOf). */
   outfit?: Accessory[]
+  /** Where the keeper put its decorations (state/petLayout.ts); automatic where absent. */
+  layout?: DecorLayout
+  /** Never moves about (the layout editor draws handles over it). */
+  still?: boolean
 }): JSX.Element {
   // A species made from a photo: its design, which can change under the same
   // id (edited in settings), so the memos below are keyed on it too.
@@ -244,11 +251,13 @@ export function Creature({
   const wearingKey = wearing?.join(',')
   // Decorations change only every ten levels: key the layout on those, not the level.
   const decorKey = decorationsOf(level).join(',')
+  // Placed once per change of what it wears, its tier or the layout; never per frame.
+  const placeKey = layoutKey(layout)
   const outfit = useMemo(() => {
-    const { back, front } = outfitPixels(species, wearing ?? [], level)
+    const { back, front } = outfitPixels(species, wearing ?? [], level, layout)
     return { back: runsOf(back), front: runsOf(front) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [species, decorKey, wearingKey, design])
+  }, [species, decorKey, wearingKey, design, placeKey])
   // Every animation here runs on an HTML box, never on something inside an
   // <svg>: animating the insides of an svg kept WebKit's GPU process at ~130MB
   // for as long as the pet was on screen (~11MB this way, measured). So the
@@ -338,7 +347,7 @@ export function Creature({
     ) : null
   // A faithful picture has no face, so its mood is in how it moves (pet.css,
   // .pet-pm). Not while a level up is moving it.
-  const moves = !!design?.photo && !cheer
+  const moves = !!design?.photo && !cheer && !still
   return (
     <div
       className={`pet-lcd pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${cheer ? ' cheer' : ''}${design?.photo ? ' pet-photo' : ''}${moves ? ' pet-pm' : ''}`}
@@ -1332,6 +1341,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (detached) void window.api.pet.openSettings('pet')
     else useUI.getState().openSettings('pet')
   }
+  // The decoration layout lives in Settings > 리븐펫 (it needs room and a keyboard).
+  const openLayout = (): void => {
+    if (detached) void window.api.pet.openSettings('pet-layout')
+    else useUI.getState().openPetLayout()
+  }
   const nestNote = (result: string): void =>
     setManageNote(result === 'full' ? t('pet.nest.full', { max: MAX_PETS }) : null)
   // Ask it something. Every answer is read off what riven already knows, so it
@@ -1796,6 +1810,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           onOnTop={setOnTopNow}
           onHide={hide}
           onOpenSettings={openSettings}
+          onLayout={openLayout}
         />
       ) : (
         <div className="pet-card-body">
@@ -1922,6 +1937,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           cheer={cheer}
           level={growth.level}
           outfit={outfit}
+          layout={pet.layout}
         />
         {/* What the pane you are watching is doing, acted out. */}
         {mime && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}

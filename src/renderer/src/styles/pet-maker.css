@@ -531,3 +531,107 @@
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
 }
+
+/* ---- 장식 배치 (PetLayoutEditor): the pet large with handles, the list beside it ---- */
+.ple {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ple-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ple-stage {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  outline: none;
+}
+.ple-stage:focus-visible {
+  border-color: var(--accent);
+}
+.ple-stage > .pet-lcd {
+  position: absolute;
+  inset: 0;
+}
+.ple-handles {
+  position: absolute;
+  inset: 0;
+}
+.ple-handle {
+  position: absolute;
+  padding: 0;
+  border: 1px dashed transparent;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.ple-handle:hover,
+.ple-handle.moved {
+  border-color: var(--hairline);
+}
+.ple-handle.on {
+  border: 1px solid var(--accent);
+  background: var(--accent-muted);
+}
+.ple-handle:active {
+  cursor: grabbing;
+}
+.ple-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: var(--text-xs);
+}
+.ple-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ctl-h);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.ple-row:hover {
+  background: var(--hover);
+}
+.ple-row.on {
+  background: var(--accent-muted);
+}
+.ple-row.sub {
+  padding-left: 18px;
+}
+.ple-row.head {
+  opacity: 0.8;
+}
+.ple-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ple-name em {
+  margin-left: 6px;
+  font-style: normal;
+  color: var(--fg-dim);
+}
+.ple-tools {
+  display: flex;
+  gap: 2px;
+}
+.ple-mini {
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+}

@@ -3,6 +3,7 @@ import type { Accessory, AccessorySlot, BuiltinSpecies, Mood, Species } from '..
 import { decorationsOf } from '../state/petLevel'
 import { customOf, isCustomId, type CustomDesign } from '../state/petSpecies'
 import { customBody, photoGrid } from './petCustomArt'
+import { bboxOf, fromRel, type Box as LayoutBox, type DecorLayout } from '../state/petLayout'
 
 // ---------------------------------------------------------------------------
 // The pixel art. Every animal is authored as a 16x16 grid of characters, one
@@ -740,6 +741,12 @@ function faceOf(sprite: Sprite, mood: Mood): { x: number; y: number; w: number; 
   return { x: sprite.face.x * 2, y: sprite.face.y * 2, w: 8, rows: FACES[mood] ?? FACES.ok }
 }
 
+/** Where a pet's face is on the drawn (32) grid, for what must not cover it. */
+export function faceBoxOf(species: Species): LayoutBox | null {
+  const f = faceOf(bodyOf(species), 'ok')
+  return f ? { x: f.x, y: f.y, w: f.w, h: f.rows.length } : null
+}
+
 /** The lit dots of a pet: its body, wearing its coat, with its mood on top. */
 export function pixelsOf(mood: Mood, species: Species = 'cat'): Dot[] {
   // A faithful picture is drawn as it is (see photoParts).
@@ -1152,78 +1159,156 @@ function headwear(
   return stamp(art, x0, y0, face.y)
 }
 
+/** One decoration as placed: see outfitPieces. */
+export interface OutfitPiece {
+  /** Its key in a DecorLayout (state/petLayout.ts). */
+  key: string
+  /** A keepsake (Accessory) or a level decoration (Decoration). */
+  kind: 'acc' | 'decor'
+  item: string
+  /** Which one of several (the pair at its feet, the twinkles of a shine). */
+  index: number | null
+  /** Drawn behind the pet or in front of it. */
+  layer: 'back' | 'front'
+  /** Where it is (none when it is hidden or there was no room for it). */
+  dots: Dot[]
+  box: LayoutBox | null
+  /** Its size where the keeper puts it (the full-size piece), in dots. */
+  size: { w: number; h: number }
+  hidden: boolean
+  /** Can be dragged somewhere else (the glow follows the pet's outline). */
+  movable: boolean
+  /** Placed where the keeper put it, not automatically. */
+  moved: boolean
+}
+
+interface PieceSpec {
+  key: string
+  kind: 'acc' | 'decor'
+  item: string
+  index: number | null
+  layer: 'back' | 'front'
+  /** Placed automatically, round what is already there; null when there is no room. */
+  auto: () => Dot[] | null
+  /** Its dots at the origin, for placing it where the keeper put it; null when it cannot be. */
+  shape: () => Dot[] | null
+}
+
+const shift = (dots: Dot[], dx: number, dy: number): Dot[] => dots.map((d) => ({ x: d.x + dx, y: d.y + dy, ch: d.ch }))
+/** Dots moved so their box starts at 0,0. */
+const atOrigin = (dots: Dot[]): Dot[] | null => {
+  if (!dots.length) return null
+  const b = bboxOf(dots)
+  return shift(dots, -b.x, -b.y)
+}
+
 /**
- * Everything a pet wears and has earned, already placed: `back` (its shine
- * and glow, drawn behind and left to twinkle) and `front` (the rest). Each
- * piece is fitted in turn around the pet and what it already has on, so
- * nothing covers its face or another piece, and a piece with nowhere to go is
- * left off. What it wears is fitted first, then the decorations of its level.
+ * Everything a pet wears and has earned, piece by piece, already placed. The
+ * automatic placement fits each piece in turn around the pet and what it
+ * already has on, so nothing covers its face or another piece, and a piece
+ * with nowhere to go is left off: what it wears first, then the decorations
+ * of its level. A `layout` (state/petLayout.ts) overrides that per piece:
+ * hidden, in front or behind, or moved, and the moved ones are placed first
+ * so every automatic one (one earned later included) goes round them.
+ * Computed once per change (the pet memoises it), never per frame.
  */
-export function outfitPixels(species: Species, worn: Accessory[], level = 0): { back: Dot[]; front: Dot[] } {
-  const none = { back: [], front: [] }
+export function outfitPieces(
+  species: Species,
+  worn: Accessory[],
+  level = 0,
+  layout?: DecorLayout
+): { pieces: OutfitPiece[]; bbox: LayoutBox } {
   const decor = decorationsOf(level)
-  if (!worn.length && !decor.length) return none
-  const face = faceOf(bodyOf(species), 'ok')
-  if (!face) return none
   const all = pixelsOf('ok', species)
+  const bbox = bboxOf(all)
+  if (!worn.length && !decor.length) return { pieces: [], bbox }
+  const face = faceOf(bodyOf(species), 'ok')
+  if (!face) return { pieces: [], bbox }
   const flesh = all.filter((d) => d.ch !== 'a' && d.ch !== 'w')
   const body = new Set(flesh.map((d) => keyOf(d.x, d.y)))
   const pet = new Set(all.map((d) => keyOf(d.x, d.y)))
   const taken = new Set(pet)
-  const back: Dot[] = []
-  const front: Dot[] = []
-  const put = (dots: Dot[], into = front): void => {
+  const take = (dots: Dot[]): Dot[] => {
     for (const d of dots) taken.add(keyOf(d.x, d.y))
-    into.push(...dots)
+    return dots
   }
-  const fit = (
-    art: string[],
-    anchor: [number, number],
-    [minY, maxY] = [0, SPRITE_SIZE],
-    into = front
-  ): boolean => {
-    // Best with a dot of air round it (a twinkle may brush the pet), then snug against it.
-    for (const margin of into === back ? [0] : [1, 0]) {
-      const at = nearestFit(art, anchor, taken, minY, margin, maxY)
-      if (at) {
-        put(stamp(art, at.x, at.y), into)
-        return true
+  // The free spot for the first of `arts` that fits, best with a dot of air
+  // round it (a twinkle behind it may brush the pet), then snug against it.
+  const fitOf = (arts: Array<string[] | undefined>, anchor: (art: string[]) => [number, number], rows: [number, number] = [0, SPRITE_SIZE], back = false): Dot[] | null => {
+    for (const art of arts) {
+      if (!art) continue
+      for (const margin of back ? [0] : [1, 0]) {
+        const at = nearestFit(art, anchor(art), taken, rows[0], margin, rows[1])
+        if (at) return stamp(art, at.x, at.y)
       }
     }
-    return false
+    return null
   }
-  const slotted = (slot: AccessorySlot): Accessory | undefined =>
-    worn.find((a) => slotOf(a) === slot)
+  const artShape = (art: string[]): Dot[] | null => atOrigin(stamp(art, 0, 0))
+  const specs: PieceSpec[] = []
+  const slotted = (slot: AccessorySlot): Accessory | undefined => worn.find((a) => slotOf(a) === slot)
+
   // Fitted from the head out, so the pieces on the body get the best spots.
   const hat = slotted('head')
-  if (hat) put(headwear(ACCESSORY_ART[hat], face, flesh))
-  const neck = slotted('neck')
-  if (neck) put(neckwear(neck, face, body))
-  const friend = slotted('float')
-  // Full size where it fits, else a smaller one, else left off.
-  const fitAny = (id: Accessory, at: (art: string[]) => [number, number], rows: [number, number]): void => {
-    for (const art of [ACCESSORY_ART[id], ACCESSORY_MINI[id]])
-      if (art && fit(art, at(art), rows)) return
+  if (hat) {
+    const dots = (): Dot[] => headwear(ACCESSORY_ART[hat], face, flesh)
+    specs.push({ key: `acc:${hat}`, kind: 'acc', item: hat, index: null, layer: 'front', auto: () => dots(), shape: () => atOrigin(dots()) })
   }
-  // Up by its head, never down at its feet.
-  if (friend) fitAny(friend, (art) => [SPRITE_SIZE - art[0].length - 1, 1], [0, face.y + face.rows.length])
+  const neck = slotted('neck')
+  if (neck) {
+    const dots = (): Dot[] => neckwear(neck, face, body)
+    specs.push({ key: `acc:${neck}`, kind: 'acc', item: neck, index: null, layer: 'front', auto: () => dots(), shape: () => atOrigin(dots()) })
+  }
+  const friend = slotted('float')
+  if (friend)
+    // Up by its head, never down at its feet; full size where it fits, else a smaller one.
+    specs.push({
+      key: `acc:${friend}`,
+      kind: 'acc',
+      item: friend,
+      index: null,
+      layer: 'front',
+      auto: () => fitOf([ACCESSORY_ART[friend], ACCESSORY_MINI[friend]], (art) => [SPRITE_SIZE - art[0].length - 1, 1], [0, face.y + face.rows.length]),
+      shape: () => artShape(ACCESSORY_ART[friend])
+    })
   const ground = slotted('ground')
   if (ground) {
     // One at each side of its feet, kept to the bottom few rows.
     const rows: [number, number] = [SPRITE_SIZE - 10, SPRITE_SIZE]
-    fitAny(ground, (art) => [0, SPRITE_SIZE - art.length], rows)
-    fitAny(ground, (art) => [SPRITE_SIZE - art[0].length, SPRITE_SIZE - art.length], rows)
+    const sides: Array<(art: string[]) => [number, number]> = [
+      (art) => [0, SPRITE_SIZE - art.length],
+      (art) => [SPRITE_SIZE - art[0].length, SPRITE_SIZE - art.length]
+    ]
+    sides.forEach((anchor, i) =>
+      specs.push({
+        key: `acc:${ground}:${i}`,
+        kind: 'acc',
+        item: ground,
+        index: i,
+        layer: 'front',
+        auto: () => fitOf([ACCESSORY_ART[ground], ACCESSORY_MINI[ground]], anchor, rows),
+        shape: () => artShape(ACCESSORY_ART[ground])
+      })
+    )
   }
   const shine = slotted('aura')
-  const aura = shine && AURA[shine]
+  const aura = shine ? AURA[shine] : undefined
   let spot = 0
-  if (aura) {
+  if (shine && aura) {
     // A big twinkle with no room for it is a small one instead.
-    for (let i = 0; i < aura.big; i++) {
-      const at = AURA_SPOTS[spot++]
-      if (!fit(ACCESSORY_ART.legend, at, undefined, back)) fit(ACCESSORY_ART.sparkle, at, undefined, back)
+    for (let i = 0; i < aura.big + aura.small; i++) {
+      const at = AURA_SPOTS[spot++ % AURA_SPOTS.length]
+      const big = i < aura.big
+      specs.push({
+        key: `acc:${shine}:${i}`,
+        kind: 'acc',
+        item: shine,
+        index: i,
+        layer: 'back',
+        auto: () => fitOf(big ? [ACCESSORY_ART.legend, ACCESSORY_ART.sparkle] : [ACCESSORY_ART.sparkle], () => at, undefined, true),
+        shape: () => artShape(big ? ACCESSORY_ART.legend : ACCESSORY_ART.sparkle)
+      })
     }
-    for (let i = 0; i < aura.small; i++) fit(ACCESSORY_ART.sparkle, AURA_SPOTS[spot++ % AURA_SPOTS.length], undefined, back)
   }
 
   // ---- what its level brings ----
@@ -1231,48 +1316,139 @@ export function outfitPixels(species: Species, worn: Accessory[], level = 0): { 
   if (has.has('halo')) {
     // Over the middle of its head (over a hat, if it has one on).
     const cx = face.x + Math.floor(face.w / 2)
-    fit(DECOR_ART.halo, [cx - 3, 0], [0, face.y])
+    specs.push({
+      key: 'decor:halo',
+      kind: 'decor',
+      item: 'halo',
+      index: null,
+      layer: 'front',
+      auto: () => fitOf([DECOR_ART.halo], () => [cx - 3, 0], [0, face.y]),
+      shape: () => artShape(DECOR_ART.halo)
+    })
   }
   if (has.has('ribbon')) {
     // Round its neck; with a keepsake already there, a bow by its head.
     const knot = DECOR_ART.ribbonKnot
-    const band = neck ? [] : neckBand(face, body, 1, (x) => (x % 4 === 0 ? 'h' : 'm'), knot, face.x + Math.floor((face.w - knot[0].length) / 2))
-    if (band.length) put(band)
-    else fit(DECOR_ART.ribbonBow, [Math.max(0, face.x - 6), Math.max(0, face.y - 4)], [0, face.y + face.rows.length])
+    const band = (): Dot[] =>
+      neck ? [] : neckBand(face, body, 1, (x) => (x % 4 === 0 ? 'h' : 'm'), knot, face.x + Math.floor((face.w - knot[0].length) / 2))
+    specs.push({
+      key: 'decor:ribbon',
+      kind: 'decor',
+      item: 'ribbon',
+      index: null,
+      layer: 'front',
+      auto: () => {
+        const b = band()
+        if (b.length) return b
+        return fitOf([DECOR_ART.ribbonBow], () => [Math.max(0, face.x - 6), Math.max(0, face.y - 4)], [0, face.y + face.rows.length])
+      },
+      shape: () => atOrigin(band()) ?? artShape(DECOR_ART.ribbonBow)
+    })
   }
   if (has.has('badge')) {
     // Pinned in the air low by its side, where nothing else usually is; on a
     // pet that fills its lower half, wherever there is air, smaller if it must.
     const low: [number, number] = [Math.floor(SPRITE_SIZE / 2), SPRITE_SIZE]
-    void (
-      fit(DECOR_ART.badge, [SPRITE_SIZE - 5, SPRITE_SIZE - 8], low) ||
-      fit(DECOR_ART.badge, [0, SPRITE_SIZE - 8], low) ||
-      fit(DECOR_ART.badge, [SPRITE_SIZE - 5, SPRITE_SIZE - 8]) ||
-      fit(DECOR_ART.badgeMini, [SPRITE_SIZE - 3, SPRITE_SIZE - 6])
-    )
+    specs.push({
+      key: 'decor:badge',
+      kind: 'decor',
+      item: 'badge',
+      index: null,
+      layer: 'front',
+      auto: () =>
+        fitOf([DECOR_ART.badge], () => [SPRITE_SIZE - 5, SPRITE_SIZE - 8], low) ??
+        fitOf([DECOR_ART.badge], () => [0, SPRITE_SIZE - 8], low) ??
+        fitOf([DECOR_ART.badge], () => [SPRITE_SIZE - 5, SPRITE_SIZE - 8]) ??
+        fitOf([DECOR_ART.badgeMini], () => [SPRITE_SIZE - 3, SPRITE_SIZE - 6]),
+      shape: () => artShape(DECOR_ART.badge)
+    })
   }
   if (has.has('sparkle'))
-    for (let i = 0; i < DECOR_SPARKLES; i++) fit(DECOR_ART.sparkle, AURA_SPOTS[(spot + i) % AURA_SPOTS.length], undefined, back)
+    for (let i = 0; i < DECOR_SPARKLES; i++) {
+      const at = AURA_SPOTS[(spot + i) % AURA_SPOTS.length]
+      specs.push({
+        key: `decor:sparkle:${i}`,
+        kind: 'decor',
+        item: 'sparkle',
+        index: i,
+        layer: 'back',
+        auto: () => fitOf([DECOR_ART.sparkle], () => at, undefined, true),
+        shape: () => artShape(DECOR_ART.sparkle)
+      })
+    }
+
+  // The keeper's moves first, so the automatic ones go round them.
+  const placed = new Map<string, { dots: Dot[]; moved: boolean }>()
+  for (const s of specs) {
+    const o = layout?.[s.key]
+    if (!o || o.hidden || o.x === undefined || o.y === undefined) continue
+    const shape = s.shape()
+    if (!shape) continue
+    const size = bboxOf(shape)
+    const at = fromRel({ x: o.x, y: o.y }, size, bbox, SPRITE_SIZE)
+    placed.set(s.key, { dots: take(shift(shape, at.x, at.y)), moved: true })
+  }
+  for (const s of specs) {
+    if (placed.has(s.key) || layout?.[s.key]?.hidden) continue
+    const dots = s.auto()
+    if (dots?.length) placed.set(s.key, { dots: take(dots), moved: false })
+  }
+  const pieces: OutfitPiece[] = specs.map((s) => {
+    const o = layout?.[s.key]
+    const p = placed.get(s.key)
+    const dots = p?.dots ?? []
+    const box = dots.length ? bboxOf(dots) : null
+    const shape = s.shape()
+    const full = shape ? bboxOf(shape) : box
+    return {
+      key: s.key,
+      kind: s.kind,
+      item: s.item,
+      index: s.index,
+      layer: o?.z ?? s.layer,
+      dots,
+      box,
+      size: full ? { w: full.w, h: full.h } : { w: 1, h: 1 },
+      hidden: !!o?.hidden,
+      movable: true,
+      moved: !!p?.moved
+    }
+  })
   if (has.has('glow')) {
     // A soft ring one dot out from its silhouette, wherever there is air.
+    const hidden = !!layout?.['decor:glow']?.hidden
     const glow: Dot[] = []
-    for (const k of pet) {
-      const x = k % SPRITE_SIZE
-      const y = (k - x) / SPRITE_SIZE
-      for (const [dx, dy] of N4) {
-        const nx = x + dx
-        const ny = y + dy
-        if (nx < 0 || ny < 0 || nx >= SPRITE_SIZE || ny >= SPRITE_SIZE) continue
-        const nk = keyOf(nx, ny)
-        if (taken.has(nk)) continue
-        taken.add(nk)
-        glow.push({ x: nx, y: ny, ch: 'g' })
+    if (!hidden)
+      for (const k of pet) {
+        const x = k % SPRITE_SIZE
+        const y = (k - x) / SPRITE_SIZE
+        for (const [dx, dy] of N4) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= SPRITE_SIZE || ny >= SPRITE_SIZE) continue
+          const nk = keyOf(nx, ny)
+          if (taken.has(nk)) continue
+          taken.add(nk)
+          glow.push({ x: nx, y: ny, ch: 'g' })
+        }
       }
-    }
-    back.push(...glow)
+    pieces.push({ key: 'decor:glow', kind: 'decor', item: 'glow', index: null, layer: 'back', dots: glow, box: glow.length ? bboxOf(glow) : null, size: { w: 1, h: 1 }, hidden, movable: false, moved: false })
   }
+  return { pieces, bbox }
+}
+
+/**
+ * Everything a pet wears and has earned, already placed (see outfitPieces):
+ * `back` (its shine and glow, drawn behind and left to twinkle) and `front`
+ * (the rest).
+ */
+export function outfitPixels(species: Species, worn: Accessory[], level = 0, layout?: DecorLayout): { back: Dot[]; front: Dot[] } {
+  const back: Dot[] = []
+  const front: Dot[] = []
+  for (const p of outfitPieces(species, worn, level, layout).pieces) (p.layer === 'back' ? back : front).push(...p.dots)
   return { back, front }
 }
+
 
 /** One keepsake on its own, as `outfitPixels` would place it. */
 export function accessoryPixels(species: Species, accessory: Accessory | null): Dot[] {

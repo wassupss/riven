@@ -10,6 +10,7 @@ import {
   type CustomSpeciesId
 } from './petSpecies'
 import { MAX_LEVEL, XP_TOKENS, levelOf } from './petLevel'
+import { sanitizeLayout, type DecorLayout } from './petLayout'
 
 // ---------------------------------------------------------------------------
 // 리븐펫: a pet that levels up on the tokens riven's agents actually spend.
@@ -128,8 +129,12 @@ export function speciesFromBirth(bornAt: number): BuiltinSpecies {
  */
 export type Mood = 'happy' | 'ok' | 'sad'
 
-/** The save format of one pet. 1 was the tamagotchi (stages, hunger, care). */
-export const PET_VERSION = 2
+/**
+ * The save format of one pet. 1 was the tamagotchi (stages, hunger, care), 2
+ * the levelling pet; 3 adds `layout` (where the keeper put its decorations).
+ * A version 2 pet reads as it was, with the automatic placement.
+ */
+export const PET_VERSION = 3
 
 export interface PetSave {
   version: typeof PET_VERSION
@@ -170,6 +175,11 @@ export interface PetSave {
   events: string[]
   /** Prizes it has chosen to wear, at most one per slot. */
   worn: Accessory[]
+  /**
+   * Where the keeper moved its decorations (장식 배치), only what differs from
+   * the automatic placement; absent when nothing does. See state/petLayout.ts.
+   */
+  layout?: DecorLayout
   /** XP gained per model: what tilts its stats. */
   diet: Record<Flavor, number>
   /** XP gained per day, oldest first, at most HISTORY_DAYS entries. */
@@ -277,6 +287,7 @@ export function normalize(raw: unknown, now: number): PetSave {
   // A species made from a photo comes with its own snapshot of the design; one
   // without (hand-edited) cannot be drawn, so it falls back like an old save.
   const custom = isCustomId(o.species) ? sanitizeDesign(o.custom) : null
+  const layout = sanitizeLayout(o.layout)
   return {
     version: PET_VERSION,
     bornAt,
@@ -305,6 +316,7 @@ export function normalize(raw: unknown, now: number): PetSave {
       ? [...new Set(o.events.filter((e): e is string => EVENTS.some((x) => x.id === e)))]
       : [],
     worn: Array.isArray(o.worn) ? wornOf(o.worn) : [],
+    ...(layout ? { layout } : {}),
     diet: FLAVORS.reduce(
       (d, f) => ({ ...d, [f]: count((o.diet as Record<string, unknown> | undefined)?.[f]) }),
       {} as Record<Flavor, number>
@@ -650,6 +662,22 @@ export function toggleWear(s: PetSave, id: Accessory): PetSave {
   return { ...s, worn: [...s.worn.filter((w) => slotOf(w) !== slot), id] }
 }
 
+/**
+ * A pet wearing `worn` with its decorations laid out as `layout`: only won
+ * prizes go on (one already worn may stay), one per slot; a layout is read
+ * defensively and an empty one is no layout. The same pet when nothing changed.
+ */
+export function withDecor(s: PetSave, worn: readonly unknown[], layout: unknown): PetSave {
+  const won = prizesOf(s)
+  const ok = wornOf(worn.filter((a) => won.includes(a as Accessory) || s.worn.includes(a as Accessory)))
+  const lay = sanitizeLayout(layout)
+  const same = ok.length === s.worn.length && ok.every((a, i) => a === s.worn[i])
+  if (same && JSON.stringify(lay ?? null) === JSON.stringify(s.layout ?? null)) return s
+  const { layout: _old, ...rest } = s
+  void _old
+  return { ...rest, worn: same ? s.worn : ok, ...(lay ? { layout: lay } : {}) }
+}
+
 /** What it has on, back to front (the shine behind it first, its hat last), so it can be drawn in order. */
 export function outfitOf(worn: readonly Accessory[]): Accessory[] {
   const bySlot = new Map<AccessorySlot, Accessory>()
@@ -929,6 +957,10 @@ export interface PetBrief {
   /** A homemade species' design, so it can be drawn where the list is shown. */
   custom?: CustomDesign
   level: number
+  /** What it has on, and every prize it has won (the decoration layout lists them). */
+  worn: Accessory[]
+  prizes: Accessory[]
+  layout?: DecorLayout
 }
 export interface NestBrief {
   active: number
@@ -943,7 +975,10 @@ export function briefOf(n: { pets: PetSave[]; active: number }): NestBrief {
       name: p.name,
       species: p.species,
       ...(p.custom ? { custom: p.custom } : {}),
-      level: levelOf(p.xp).level
+      level: levelOf(p.xp).level,
+      worn: p.worn,
+      prizes: prizesOf(p),
+      ...(p.layout ? { layout: p.layout } : {})
     }))
   }
 }
@@ -971,6 +1006,8 @@ export type PetCommand =
   | ({ op: 'rename'; name: string } & PetRef)
   | ({ op: 'restart' } & PetRef)
   | ({ op: 'release' } & PetRef)
+  /** The decoration layout's save: what it wears and where its decorations go (null: all automatic). */
+  | ({ op: 'decor'; worn: Accessory[]; layout: DecorLayout | null } & PetRef)
 /**
  * ok: done. full: no room for another pet. last: the only pet is never let go.
  * stale: that pet is not where the command thought it was. none: no one
@@ -1001,6 +1038,11 @@ export function applyCommand(n: Nest, cmd: PetCommand, now: number): { nest: Nes
     case 'release':
       if (n.pets.length <= 1) return { nest: n, result: 'last' }
       return { nest: release(n, now, cmd.index), result: 'ok' }
+    case 'decor': {
+      const next = withDecor(p, Array.isArray(cmd.worn) ? cmd.worn : p.worn, cmd.layout)
+      if (next === p) return { nest: n, result: 'ok' }
+      return { nest: { ...n, pets: n.pets.map((q, i) => (i === cmd.index ? next : q)) }, result: 'ok' }
+    }
   }
 }
 

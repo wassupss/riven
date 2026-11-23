@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PawPrint, EyeOff, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
+import { PawPrint, EyeOff, LayoutGrid, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { MAX_PETS, petSubtitle, petTitle, type Hatch, type NestBrief } from '../state/pet'
 import { designOf, type CustomSpecies } from '../state/petSpecies'
@@ -33,7 +33,8 @@ export default function PetManage({
   onWhere,
   onOnTop,
   onHide,
-  onOpenSettings
+  onOpenSettings,
+  onLayout
 }: {
   nest: NestBrief
   detached: boolean
@@ -51,6 +52,8 @@ export default function PetManage({
   onOnTop: (on: boolean) => void
   onHide: () => void
   onOpenSettings: () => void
+  /** The decoration layout of the one that is out (opens in Settings). */
+  onLayout: () => void
 }): JSX.Element {
   const t = useT()
   const [asking, setAsking] = useState<Danger | null>(null)
@@ -138,6 +141,10 @@ export default function PetManage({
           </button>
         </div>
       )}
+      <button type="button" className="pet-btn wide" onClick={onLayout}>
+        <LayoutGrid size={12} />
+        <span>{t('pet.layout.open')}</span>
+      </button>
 
       <div className="pet-manage-label">{t('pet.nest.newPet')}</div>
       {own.length > 0 && (

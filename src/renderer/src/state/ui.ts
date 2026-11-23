@@ -21,6 +21,9 @@ interface UIState {
   setSettingsOpen: (v: boolean) => void
   settingsTab: SettingsTab
   openSettings: (tab?: SettingsTab) => void
+  /** Bumped to open Settings > 리븐펫 with the decoration layout of the shown pet open. */
+  petLayoutAsk: number
+  openPetLayout: () => void
   // The entire left sidebar (workspaces + explorer + usage). ⌘B toggles this.
   showSidebar: boolean
   toggleSidebar: () => void
@@ -47,6 +50,8 @@ export const useUI = create<UIState>((set) => ({
   setSettingsOpen: (v) => set({ settingsOpen: v }),
   settingsTab: 'general',
   openSettings: (tab = 'general') => set({ settingsOpen: true, settingsTab: tab }),
+  petLayoutAsk: 0,
+  openPetLayout: () => set((s) => ({ settingsOpen: true, settingsTab: 'pet', petLayoutAsk: s.petLayoutAsk + 1 })),
   showSidebar: true,
   toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
   metaHeld: false,

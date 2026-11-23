@@ -52,7 +52,9 @@ export default function PetHost(): JSX.Element | null {
     const offHidden = window.api.pet.onHidden(() => set({ petShow: false }))
     // The floating pet's "설정 열기": main has brought this window up.
     const offSettings = window.api.pet.onOpenSettings((tab) =>
-      useUI.getState().openSettings((tab || 'pet') as SettingsTab)
+      tab === 'pet-layout'
+        ? useUI.getState().openPetLayout()
+        : useUI.getState().openSettings((tab || 'pet') as SettingsTab)
     )
     return () => {
       offOnTop()
