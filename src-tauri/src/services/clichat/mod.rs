@@ -147,6 +147,18 @@ pub fn system_prompt(mcp_prompt: Option<&str>, global: Option<&str>) -> Option<S
 pub struct Outgoing {
   pub text: String,
   pub images: Vec<String>,
+  /// Typed while a turn runs and pushed in now (steer): see `steer`.
+  pub now: bool,
+}
+
+/// The CLI's own "send this queued message now" after a message typed
+/// while a turn runs (both CLIs otherwise hold it for the next tool
+/// boundary, verified live). Claude Code 2.1.330: Ctrl+X Ctrl+S (its hint
+/// under the queued message; the running tool goes to the background and
+/// the message is sent at once, verified). Codex 0.158: Esc ("press esc to
+/// interrupt and send immediately", its own hint).
+pub fn send_now_keys(codex: bool) -> &'static [&'static str] {
+  if codex { &["\x1b"] } else { &["\x18", "\x13"] }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -245,6 +257,38 @@ pub fn owns(key: &str) -> bool {
 pub fn init(app: &AppHandle) {
   let _ = APP.set(app.clone());
   attach::sweep();
+  crate::services::agentcli::register(crate::services::agentcli::Engine { open: open_count, restart: restart_panes });
+}
+
+/// Live CLI chats on a CLI ("claude" | "codex"): what an update reaches.
+fn open_count(cmd: &str) -> u32 {
+  let list: Vec<Arc<Mutex<Sess>>> = all().values().cloned().collect();
+  list.iter().filter(|s| { let st = lock(s); !st.dead && st.opts.is_codex() == (cmd == "codex") }).count() as u32
+}
+
+/// An update applied or the Settings restart: the installed CLI behind
+/// these panes, through the same turn-boundary restart a new binary on disk
+/// gets (life.rs). A parked pane needs nothing: its next start is the new
+/// one. (restarted now, after the turn).
+fn restart_panes(cmd: Option<String>, key: Option<String>) -> crate::services::agentcli::BoxFut<(u32, u32)> {
+  Box::pin(async move {
+    let list: Vec<Arc<Mutex<Sess>>> = all().iter().filter(|(k, _)| key.as_deref().is_none_or(|x| x == k.as_str())).map(|(_, v)| v.clone()).collect();
+    let (mut now, mut later) = (0, 0);
+    for s in list {
+      let mut st = lock(&s);
+      if st.dead || st.parked || cmd.as_deref().is_some_and(|c| st.opts.is_codex() != (c == "codex")) {
+        continue;
+      }
+      if st.busy || !st.perms.is_empty() || st.blocked.is_some() || st.terminal {
+        later += 1;
+      } else {
+        now += 1;
+      }
+      st.updated = true;
+      emit_state(&st);
+    }
+    (now, later)
+  })
 }
 
 fn emit(label: &str, payload: Value) {
@@ -340,7 +384,7 @@ pub fn command_line(real: Option<&str>, flags: &Flags, settings: &str, opts: &St
   if let Some(a) = opts.agent.as_deref().filter(|a| !a.is_empty()) {
     c.push(format!("--agent {}", sq(a)));
   }
-  if let Some(ac) = crate::services::chat::autocompact_arg(opts.autocompact.as_deref()) {
+  if let Some(ac) = crate::services::agentcli::autocompact_arg(opts.autocompact.as_deref()) {
     c.push(format!("--autocompact {ac}"));
   }
   if let Some(m) = opts.model.as_deref().filter(|m| !m.is_empty() && *m != "default") {
@@ -388,7 +432,7 @@ pub async fn start(label: String, key: String, opts: StartOpts) -> Result<Value,
 
 fn transcript_exists(opts: &StartOpts, id: &str) -> bool {
   if opts.is_codex() {
-    return crate::services::chat::history::find_rollout(id).is_some();
+    return crate::services::agentcli::history::find_rollout(id).is_some();
   }
   transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), id).is_file() || transcript::find_by_id(opts.config_dir.as_deref(), id).is_some()
 }
@@ -414,8 +458,8 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
   let session_id = match (codex, fork) {
     (true, true) => String::new(),
     (true, false) => resume_from.clone().unwrap_or_default(),
-    (false, true) => crate::services::chat::util::uuid(),
-    (false, false) => resume.clone().unwrap_or_else(crate::services::chat::util::uuid),
+    (false, true) => crate::services::util::uuid(),
+    (false, false) => resume.clone().unwrap_or_else(crate::services::util::uuid),
   };
   let (cmd, path, real) = if codex {
     let (extras, extra) = codex_env(&key, &opts).await;
@@ -426,7 +470,7 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
       (None, _) => codex::Start::New,
     };
     let cmd = codex::command_line(real.as_deref(), &start, opts.model.as_deref(), opts.permission_mode.as_deref(), &extra);
-    let path = resume_from.as_deref().filter(|_| !fork).and_then(crate::services::chat::history::find_rollout).unwrap_or_default();
+    let path = resume_from.as_deref().filter(|_| !fork).and_then(crate::services::agentcli::history::find_rollout).unwrap_or_default();
     (cmd, path, (extras, real))
   } else {
     let settings = settings_file()?;
@@ -520,9 +564,9 @@ async fn launch_env(key: &str, opts: &StartOpts) -> (HashMap<String, String>, Fl
   if let Some(p) = &prompt {
     extras.insert("RIVEN_CLICHAT_PROMPT".into(), p.clone());
   }
-  let external = crate::services::chat::mcp::configured_mcp_servers(&opts.cwd, opts.config_dir.as_deref().filter(|d| !d.is_empty())).await;
-  let base = crate::services::chat::allowed_base(&opts.tools_denied);
-  let allowed = crate::services::chat::mcp::allowed_tools_value(&base, crate::services::mcp::TOOL_PREFIX, &external, &[]);
+  let external = crate::services::agentcli::mcp::configured_mcp_servers(&opts.cwd, opts.config_dir.as_deref().filter(|d| !d.is_empty())).await;
+  let base = crate::services::agentcli::allowed_base(&opts.tools_denied);
+  let allowed = crate::services::agentcli::mcp::allowed_tools_value(&base, crate::services::mcp::TOOL_PREFIX, &external, &[]);
   (extras, Flags { mcp, prompt: prompt.is_some(), allowed: Some(allowed) })
 }
 
@@ -843,6 +887,7 @@ fn type_message(st: &mut Sess, m: Outgoing) {
   if writes.is_empty() {
     return;
   }
+  let was_busy = st.busy;
   // Prose always starts a turn. A slash command may not (/cost just
   // prints): its UserPromptSubmit hook says if it did.
   if !command {
@@ -851,6 +896,9 @@ fn type_message(st: &mut Sess, m: Outgoing) {
   st.waiting = false;
   st.last_active = Instant::now();
   emit_state(st);
+  // Pushed in now only into a turn that is running: otherwise the message
+  // starts its own turn and there is nothing to jump.
+  let now: &'static [&'static str] = if m.now && was_busy { send_now_keys(st.codex.is_some()) } else { &[] };
   let key = st.key.clone();
   let typing = st.typing.clone();
   tauri::async_runtime::spawn(async move {
@@ -862,7 +910,11 @@ fn type_message(st: &mut Sess, m: Outgoing) {
       crate::services::pty::write(key.clone(), w);
     }
     tokio::time::sleep(PASTE_SETTLE).await;
-    crate::services::pty::write(key, "\r".into());
+    crate::services::pty::write(key.clone(), "\r".into());
+    for k in now {
+      tokio::time::sleep(PASTE_SETTLE).await;
+      crate::services::pty::write(key.clone(), (*k).into());
+    }
   });
 }
 
@@ -873,7 +925,7 @@ pub fn send(key: &str, text: String, images: Vec<String>) {
   if st.dead || (text.trim().is_empty() && images.is_empty()) {
     return;
   }
-  let m = Outgoing { text, images };
+  let m = Outgoing { text, images, now: false };
   st.last_active = Instant::now();
   if st.parked {
     // Back from idle: the same conversation in a new process, this
@@ -887,6 +939,25 @@ pub fn send(key: &str, text: String, images: Vec<String>) {
     return;
   }
   type_message(&mut st, m);
+}
+
+/// A message for the running turn, now: typed in and pushed past the CLI's
+/// own queue (send_now_keys). Not busy, it is an ordinary message.
+pub fn steer(key: &str, text: String, images: Vec<String>) {
+  let Some(s) = get(key) else { return };
+  let mut st = lock(&s);
+  let busy = st.busy && st.ready && !st.parked && !st.dead;
+  drop(st);
+  if !busy {
+    return send(key, text, images);
+  }
+  st = lock(&s);
+  let images: Vec<String> = images.into_iter().filter(|p| attach::is_image(p) && std::path::Path::new(p).is_file()).collect();
+  if text.trim().is_empty() && images.is_empty() {
+    return;
+  }
+  st.last_active = Instant::now();
+  type_message(&mut st, Outgoing { text, images, now: true });
 }
 
 /// Esc: what the CLI takes as "stop this turn". No Stop hook follows an
@@ -979,12 +1050,30 @@ pub fn rename(key: &str, title: &str) -> bool {
   }
   let Some(s) = get(key) else { return false };
   let (parked, codex) = { let st = lock(&s); (st.parked, st.codex.is_some()) };
-  // Codex has no /rename.
-  if parked || codex {
+  if parked {
     return false;
   }
+  // Codex 0.158 takes it the same way (verified: it lands in its
+  // session_index.jsonl as the thread's name). Its rollout carries no
+  // title line, so the name is put on the header here.
   send(key, format!("/rename {name}"), Vec::new());
+  if codex {
+    let mut st = lock(&s);
+    st.store.ingest(&json!({ "type": "custom-title", "customTitle": name }).to_string());
+  }
   true
+}
+
+/// Codex names a conversation itself after its first turn and keeps the
+/// name (and one given with /rename) outside the rollout: picked up at the
+/// turn boundaries.
+fn codex_title(st: &mut Sess) {
+  if st.codex.is_none() || st.session_id.is_empty() {
+    return;
+  }
+  if let Some(n) = crate::services::agentcli::history::codex_name(&st.session_id) {
+    st.store.ingest(&json!({ "type": "custom-title", "customTitle": n }).to_string());
+  }
 }
 
 pub fn stop(key: &str) {
@@ -1145,6 +1234,7 @@ pub fn hook(pane: Option<&str>, agent: Option<&str>, event: &str, body: &str) ->
         // The transcript may still be a line behind the hook: read it first.
         pump_transcript(&mut st);
         emit_turn_done(&st, reply, error, false);
+        codex_title(&mut st);
       }
       st.busy = false;
       st.waiting = false;
@@ -1201,7 +1291,7 @@ pub fn hook(pane: Option<&str>, agent: Option<&str>, event: &str, body: &str) ->
       emit_state(&st);
     }
     "PermissionRequest" => {
-      let id = crate::services::chat::util::uuid();
+      let id = crate::services::util::uuid();
       let (tx, rx) = mpsc::channel();
       let ask = if hooks::is_question(&tool) { Ask::Question } else { Ask::Permission };
       let p = Pending { id: id.clone(), ask, tool, input: payload.get("tool_input").cloned().unwrap_or(Value::Null), tx };
@@ -1256,6 +1346,8 @@ pub fn hook(pane: Option<&str>, agent: Option<&str>, event: &str, body: &str) ->
       st.store = Store::default();
       st.sent.clear();
       st.fresh = true;
+      // A resumed Codex conversation keeps the name it had.
+      codex_title(&mut st);
     }
   }
   (204, None)
@@ -1312,17 +1404,17 @@ mod tests {
 
   #[test]
   fn message_keystrokes() {
-    let (w, cmd) = message_writes(&Outgoing { text: "hi\r\nthere".into(), images: vec![] });
+    let (w, cmd) = message_writes(&Outgoing { text: "hi\r\nthere".into(), ..Default::default() });
     assert_eq!((w, cmd), (vec!["\x1b[200~hi\nthere\x1b[201~".to_string()], false));
-    let (w, cmd) = message_writes(&Outgoing { text: "/rename x".into(), images: vec![] });
+    let (w, cmd) = message_writes(&Outgoing { text: "/rename x".into(), ..Default::default() });
     assert_eq!((w, cmd), (vec!["/rename x".to_string()], true));
     // Images: each path is a paste of its own after the text (the CLI turns
     // a pasted image path into [Image #N]); a slash command with an image
     // is just text.
-    let (w, cmd) = message_writes(&Outgoing { text: "/what is this".into(), images: vec!["/t/a b.png".into()] });
+    let (w, cmd) = message_writes(&Outgoing { text: "/what is this".into(), images: vec!["/t/a b.png".into()], ..Default::default() });
     assert_eq!(w, vec!["\x1b[200~/what is this \x1b[201~".to_string(), "\x1b[200~/t/a b.png\x1b[201~".to_string()]);
     assert!(!cmd);
-    let (w, _) = message_writes(&Outgoing { text: "  ".into(), images: vec!["/t/x.png".into()] });
+    let (w, _) = message_writes(&Outgoing { text: "  ".into(), images: vec!["/t/x.png".into()], ..Default::default() });
     assert_eq!(w, vec!["\x1b[200~/t/x.png\x1b[201~".to_string()]);
     assert!(message_writes(&Outgoing::default()).0.is_empty());
   }

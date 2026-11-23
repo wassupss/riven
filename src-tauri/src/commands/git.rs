@@ -4,7 +4,7 @@
 // 'git:changed' goes to the page that last called git:watch.
 
 use super::emit_ipc;
-use crate::services::chat::util::js_string;
+use crate::services::util::js_string;
 use crate::services::git::{github, repo, watch_head};
 use serde_json::Value;
 use tauri::{AppHandle, Webview};
@@ -175,6 +175,6 @@ pub async fn gh_reply_thread(repo_dir: String, thread_id: Option<Value>, body: O
 
 #[tauri::command]
 pub async fn gh_resolve_thread(repo_dir: String, thread_id: Option<Value>, resolved: Option<Value>) -> Value {
-  let resolved = crate::services::chat::util::truthy(resolved.as_ref());
+  let resolved = crate::services::util::truthy(resolved.as_ref());
   github::set_thread_resolved(&repo_dir, &self::thread_id(thread_id.as_ref()), resolved).await
 }

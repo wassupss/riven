@@ -143,7 +143,7 @@ fn day_key(ms: f64) -> String {
 }
 
 fn today_key() -> String {
-  day_key(crate::services::chat::util::now_ms())
+  day_key(crate::services::util::now_ms())
 }
 
 fn local_day_key(iso: &str) -> String {
@@ -365,10 +365,10 @@ pub fn usage_today(config_dir: Option<&str>) -> Value {
   }
   let mut seen = std::collections::HashSet::new();
   let mut by_model: Vec<(String, [f64; 5])> = Vec::new();
-  let cutoff = crate::services::chat::util::now_ms() - 36.0 * 3600.0 * 1000.0;
+  let cutoff = crate::services::util::now_ms() - 36.0 * 3600.0 * 1000.0;
   for file in &files {
     let Ok(meta) = std::fs::metadata(file) else { continue };
-    let mtime = crate::services::chat::util::mtime_ms(&meta);
+    let mtime = crate::services::util::mtime_ms(&meta);
     if mtime < cutoff {
       continue;
     }
@@ -436,7 +436,7 @@ pub fn usage_codex() -> Value {
   out["installed"] = json!(true);
   let today = today_key();
   let mut files = Vec::new();
-  let now = crate::services::chat::util::now_ms();
+  let now = crate::services::util::now_ms();
   for t in [now, now - 24.0 * 3600.0 * 1000.0] {
     walk_jsonl(&day_dir(t), &mut files, 4000);
   }

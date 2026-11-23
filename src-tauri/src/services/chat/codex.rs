@@ -6,7 +6,7 @@
 // turns them into the pane's own ChatEvents, so a Codex conversation renders
 // exactly like a Claude one. Auth is the user's own Codex login.
 
-use super::util::{clamp, jnum, js_string, shorten};
+use crate::services::util::{clamp, jnum, js_string, shorten};
 use super::StartOpts;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -325,7 +325,7 @@ impl Session {
     if line.trim().is_empty() {
       return;
     }
-    let Some(msg) = super::util::parse(line) else { return };
+    let Some(msg) = crate::services::util::parse(line) else { return };
     self.lock().last_active = Instant::now();
     let method = msg.get("method").and_then(Value::as_str);
     let params = msg.get("params").filter(|p| !p.is_null()).cloned().unwrap_or(json!({}));
@@ -359,15 +359,15 @@ impl Session {
           eprintln!(
             "[codex:{}] declined MCP elicitation from {}: {}",
             self.key,
-            super::util::string_or(params.get("serverName"), "undefined"),
-            super::util::slice(&super::util::string_or(params.get("message"), ""), 160)
+            crate::services::util::string_or(params.get("serverName"), "undefined"),
+            crate::services::util::slice(&crate::services::util::string_or(params.get("message"), ""), 160)
           );
         }
         let result = if accept { json!({ "action": "accept", "content": {}, "_meta": null }) } else { json!({ "action": "decline", "content": null, "_meta": null }) };
         self.write(&json!({ "id": id, "result": result }));
       }
       _ => {
-        eprintln!("[codex:{}] unanswered request {method} {}", self.key, super::util::slice(&params.to_string(), 200));
+        eprintln!("[codex:{}] unanswered request {method} {}", self.key, crate::services::util::slice(&params.to_string(), 200));
         self.write(&json!({ "id": id, "error": { "code": -32601, "message": format!("riven does not handle {method}") } }));
       }
     }
@@ -431,10 +431,10 @@ impl Session {
           let g = |k: &str| u.get(k).and_then(Value::as_f64).unwrap_or(0.0);
           (g("inputTokens") - g("cachedInputTokens"), g("outputTokens"))
         };
-        if let Some(total) = usage.and_then(|u| u.get("total")).filter(|t| super::util::truthy(Some(t))) {
+        if let Some(total) = usage.and_then(|u| u.get("total")).filter(|t| crate::services::util::truthy(Some(t))) {
           let total = norm(total);
           if st.usage_at_turn.is_none() {
-            let last = usage.and_then(|u| u.get("last")).filter(|t| super::util::truthy(Some(t))).map(norm).unwrap_or((0.0, 0.0));
+            let last = usage.and_then(|u| u.get("last")).filter(|t| crate::services::util::truthy(Some(t))).map(norm).unwrap_or((0.0, 0.0));
             st.usage_at_turn = Some((total.0 - last.0, total.1 - last.1));
           }
           st.usage_total = Some(total);
@@ -589,7 +589,7 @@ impl Session {
     self.lock().alive = false;
     let _ = self.tx.send(super::claude::Msg::Close);
     if !self.exited.load(Ordering::SeqCst) {
-      super::util::sigterm(self.pid);
+      crate::services::util::sigterm(self.pid);
     }
   }
 

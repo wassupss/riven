@@ -173,7 +173,7 @@ fn probe() {
   let codex = std::env::var("RIVEN_PROBE_CLI").as_deref() == Ok("codex");
   if !codex && !extra.iter().any(|a| a == "--resume" || a == "--session-id") {
     extra.push("--session-id".into());
-    extra.push(crate::services::chat::util::uuid());
+    extra.push(crate::services::util::uuid());
   }
   let vt = Arc::new(Mutex::new(Vt::new(super::COLS, super::ROWS, 2000).unwrap()));
   let pair = native_pty_system().openpty(PtySize { rows: super::ROWS, cols: super::COLS, pixel_width: 0, pixel_height: 0 }).unwrap();
@@ -284,7 +284,7 @@ fn probe() {
       // A message the way the service types it (text|image path|...).
       "send" => {
         let mut parts = arg.split('|').map(str::to_string);
-        let m = super::Outgoing { text: parts.next().unwrap_or_default(), images: parts.collect() };
+        let m = super::Outgoing { text: parts.next().unwrap_or_default(), images: parts.collect(), now: false };
         for (i, w) in super::message_writes(&m).0.into_iter().enumerate() {
           if i > 0 {
             std::thread::sleep(Duration::from_millis(120));

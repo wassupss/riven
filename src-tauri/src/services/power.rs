@@ -89,7 +89,7 @@ fn cpu_seconds() -> f64 {
 /// renderer's WebKit processes are not ours to list (they are the system's
 /// XPC services), so this is the main process only.
 pub fn metrics() -> Value {
-  let now = crate::services::chat::util::now_ms();
+  let now = crate::services::util::now_ms();
   let cpu = cpu_seconds();
   let pct = {
     let mut last = LAST.lock().unwrap();

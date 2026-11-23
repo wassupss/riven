@@ -132,7 +132,7 @@ fn interactive(cwd: &str, scratch: &std::path::Path) -> Value {
   let port = hook_server(log.clone(), vt.clone(), t0);
   let settings = scratch.join("clichat-measure-settings.json");
   std::fs::write(&settings, hooks::settings(&format!("http://127.0.0.1:{port}")).to_string()).unwrap();
-  let sid = crate::services::chat::util::uuid();
+  let sid = crate::services::util::uuid();
 
   let pair = native_pty_system().openpty(PtySize { rows: super::ROWS, cols: super::COLS, pixel_width: 0, pixel_height: 0 }).unwrap();
   let mut cmd = CommandBuilder::new("claude");
@@ -255,7 +255,7 @@ fn interactive(cwd: &str, scratch: &std::path::Path) -> Value {
 }
 
 fn headless(cwd: &str) -> Value {
-  let sid = crate::services::chat::util::uuid();
+  let sid = crate::services::util::uuid();
   let mut cmd = std::process::Command::new("claude");
   cmd.args([
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -412,7 +412,7 @@ fn probe() {
   let port = hook_server(log.clone(), dummy, t0);
   let settings = scratch.join("clichat-probe-settings.json");
   std::fs::write(&settings, hooks::settings(&format!("http://127.0.0.1:{port}")).to_string()).unwrap();
-  let sid = crate::services::chat::util::uuid();
+  let sid = crate::services::util::uuid();
   let path = transcript_path(&cwd, None, &sid);
   let mut report = json!({});
 

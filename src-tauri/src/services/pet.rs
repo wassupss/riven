@@ -348,7 +348,7 @@ pub fn focusable(on: bool) {
 /// unfocused page). At most 4096 UTF-16 units, as text.slice(0, 4096).
 pub fn copy(text: &Value) {
   let Value::String(t) = text else { return };
-  let t = super::chat::util::utf16_prefix(t, 4096).to_string();
+  let t = super::util::utf16_prefix(t, 4096).to_string();
   use std::io::Write;
   if let Ok(mut c) = std::process::Command::new("/usr/bin/pbcopy").env("LANG", "en_US.UTF-8").stdin(std::process::Stdio::piped()).spawn() {
     if let Some(mut i) = c.stdin.take() {

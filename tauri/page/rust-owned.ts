@@ -73,6 +73,7 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   // CLI chat, experimental (services/clichat). Events: 'clichat:event'.
   'clichat:start': ['key', 'opts'],
   'clichat:send': ['key', 'text', 'images'],
+  'clichat:steer': ['key', 'text', 'images'],
   'clichat:keys': ['key', 'data'],
   'clichat:interrupt': ['key'],
   'clichat:stop': ['key'],
@@ -100,6 +101,8 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'chat:sessions': ['cwd', 'configDir'],
   'chat:sessionRename': ['cwd', 'id', 'title', 'configDir'],
   'chat:sessionDelete': ['cwd', 'id', 'configDir'],
+  'chat:codexSessions': ['cwd'],
+  'chat:codexSessionDelete': ['id'],
   'chat:agents': ['cwd'],
   'chat:sessionTranscript': ['cwd', 'id', 'configDir'],
   'chat:sessionTitle': ['cwd', 'id', 'configDir'],

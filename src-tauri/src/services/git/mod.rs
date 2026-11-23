@@ -13,7 +13,7 @@
 pub mod github;
 pub mod repo;
 
-use crate::services::chat::util::sigterm;
+use crate::services::util::sigterm;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;

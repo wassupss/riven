@@ -84,7 +84,7 @@ pub async fn real_bin(cmd: &'static str) -> Option<String> {
   static CLAUDE: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
   static CODEX: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
   let cell = if cmd == "claude" { &CLAUDE } else { &CODEX };
-  cell.get_or_init(|| crate::services::chat::util::resolve_bin(cmd)).await.clone()
+  cell.get_or_init(|| crate::services::util::resolve_bin(cmd)).await.clone()
 }
 
 pub(crate) fn user_has_codex_instructions() -> bool {

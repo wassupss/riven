@@ -9,7 +9,7 @@
 // in progress (requestTimeout 0), 60s to send the headers, 65s keep-alive.
 
 use super::{call_tool, hooks, rpc_key, server, tool_defs, Call};
-use crate::services::chat::util;
+use crate::services::util;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};

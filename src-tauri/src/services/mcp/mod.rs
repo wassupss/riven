@@ -29,7 +29,7 @@ mod http;
 pub mod hooks;
 pub(crate) mod shim;
 
-use crate::services::chat::util;
+use crate::services::util;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::net::TcpStream;

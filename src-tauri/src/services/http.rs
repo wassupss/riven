@@ -277,11 +277,11 @@ fn header_pairs(v: Option<&Value>) -> Vec<(String, String)> {
 
 /// api:request (runRequest): status, headers, body and timing.
 pub fn api_request(opts: &Value) -> Value {
-  let started = crate::services::chat::util::now_ms();
+  let started = crate::services::util::now_ms();
   let method = opts.get("method").and_then(Value::as_str).filter(|m| !m.is_empty()).unwrap_or("GET").to_uppercase();
   let url = opts.get("url").map(crate::services::db::js::string).unwrap_or_else(|| "undefined".into());
   let body = if method == "GET" || method == "HEAD" { None } else { opts.get("body").filter(|b| !b.is_null()).map(crate::services::db::js::string) };
-  let elapsed = || (crate::services::chat::util::now_ms() - started).round() as i64;
+  let elapsed = || (crate::services::util::now_ms() - started).round() as i64;
   match fetch(&url, &method, &header_pairs(opts.get("headers")), body) {
     Ok(r) => {
       let mut h = Map::new();

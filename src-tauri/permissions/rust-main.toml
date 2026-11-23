@@ -4,6 +4,28 @@
 identifier = "rust-main"
 description = "Every command of riven's Rust main."
 permissions = [
+  "allow-chat-restart",
+  "allow-chat-detect-clis",
+  "allow-chat-session-info",
+  "allow-chat-sessions",
+  "allow-chat-session-rename",
+  "allow-chat-session-delete",
+  "allow-chat-agents",
+  "allow-chat-session-transcript",
+  "allow-chat-session-title",
+  "allow-chat-mcp-list",
+  "allow-chat-mcp-session",
+  "allow-chat-mcp-logout",
+  "allow-chat-mcp-approve",
+  "allow-cli-update",
+  "allow-cli-update-status",
+  "allow-cli-apply-update",
+  "allow-cli-defer-update",
+  "allow-accounts-profile-dir",
+  "allow-accounts-logout",
+  "allow-accounts-list",
+  "allow-chat-codex-sessions",
+  "allow-chat-codex-session-delete",
   "allow-env-defaults",
   "allow-capture-save",
   "allow-shell-open-external",
@@ -36,33 +58,14 @@ permissions = [
   "allow-chat-send",
   "allow-chat-alive",
   "allow-chat-interrupt",
-  "allow-chat-restart",
   "allow-chat-set-model",
   "allow-chat-set-mode",
   "allow-chat-stop",
   "allow-chat-title",
-  "allow-chat-detect-clis",
-  "allow-chat-session-info",
-  "allow-chat-sessions",
-  "allow-chat-session-rename",
-  "allow-chat-session-delete",
-  "allow-chat-agents",
-  "allow-chat-session-transcript",
-  "allow-chat-session-title",
-  "allow-chat-mcp-list",
-  "allow-chat-mcp-session",
-  "allow-chat-mcp-logout",
-  "allow-chat-mcp-approve",
-  "allow-cli-update",
-  "allow-cli-update-status",
-  "allow-cli-apply-update",
-  "allow-cli-defer-update",
-  "allow-accounts-profile-dir",
-  "allow-accounts-logout",
-  "allow-accounts-list",
   "allow-clichat-start",
   "allow-clichat-restart",
   "allow-clichat-send",
+  "allow-clichat-steer",
   "allow-clichat-keys",
   "allow-clichat-menu",
   "allow-clichat-interrupt",
@@ -272,6 +275,116 @@ permissions = [
 ]
 
 [[permission]]
+identifier = "allow-chat-restart"
+description = "Allows chat_restart."
+commands.allow = ["chat_restart"]
+
+[[permission]]
+identifier = "allow-chat-detect-clis"
+description = "Allows chat_detect_clis."
+commands.allow = ["chat_detect_clis"]
+
+[[permission]]
+identifier = "allow-chat-session-info"
+description = "Allows chat_session_info."
+commands.allow = ["chat_session_info"]
+
+[[permission]]
+identifier = "allow-chat-sessions"
+description = "Allows chat_sessions."
+commands.allow = ["chat_sessions"]
+
+[[permission]]
+identifier = "allow-chat-session-rename"
+description = "Allows chat_session_rename."
+commands.allow = ["chat_session_rename"]
+
+[[permission]]
+identifier = "allow-chat-session-delete"
+description = "Allows chat_session_delete."
+commands.allow = ["chat_session_delete"]
+
+[[permission]]
+identifier = "allow-chat-agents"
+description = "Allows chat_agents."
+commands.allow = ["chat_agents"]
+
+[[permission]]
+identifier = "allow-chat-session-transcript"
+description = "Allows chat_session_transcript."
+commands.allow = ["chat_session_transcript"]
+
+[[permission]]
+identifier = "allow-chat-session-title"
+description = "Allows chat_session_title."
+commands.allow = ["chat_session_title"]
+
+[[permission]]
+identifier = "allow-chat-mcp-list"
+description = "Allows chat_mcp_list."
+commands.allow = ["chat_mcp_list"]
+
+[[permission]]
+identifier = "allow-chat-mcp-session"
+description = "Allows chat_mcp_session."
+commands.allow = ["chat_mcp_session"]
+
+[[permission]]
+identifier = "allow-chat-mcp-logout"
+description = "Allows chat_mcp_logout."
+commands.allow = ["chat_mcp_logout"]
+
+[[permission]]
+identifier = "allow-chat-mcp-approve"
+description = "Allows chat_mcp_approve."
+commands.allow = ["chat_mcp_approve"]
+
+[[permission]]
+identifier = "allow-cli-update"
+description = "Allows cli_update."
+commands.allow = ["cli_update"]
+
+[[permission]]
+identifier = "allow-cli-update-status"
+description = "Allows cli_update_status."
+commands.allow = ["cli_update_status"]
+
+[[permission]]
+identifier = "allow-cli-apply-update"
+description = "Allows cli_apply_update."
+commands.allow = ["cli_apply_update"]
+
+[[permission]]
+identifier = "allow-cli-defer-update"
+description = "Allows cli_defer_update."
+commands.allow = ["cli_defer_update"]
+
+[[permission]]
+identifier = "allow-accounts-profile-dir"
+description = "Allows accounts_profile_dir."
+commands.allow = ["accounts_profile_dir"]
+
+[[permission]]
+identifier = "allow-accounts-logout"
+description = "Allows accounts_logout."
+commands.allow = ["accounts_logout"]
+
+[[permission]]
+identifier = "allow-accounts-list"
+description = "Allows accounts_list."
+commands.allow = ["accounts_list"]
+
+[[permission]]
+identifier = "allow-chat-codex-sessions"
+description = "Allows chat_codex_sessions."
+commands.allow = ["chat_codex_sessions"]
+
+[[permission]]
+identifier = "allow-chat-codex-session-delete"
+description = "Allows chat_codex_session_delete."
+commands.allow = ["chat_codex_session_delete"]
+
+[[permission]]
 identifier = "allow-env-defaults"
 description = "Allows env_defaults."
 commands.allow = ["env_defaults"]
@@ -432,11 +545,6 @@ description = "Allows chat_interrupt."
 commands.allow = ["chat_interrupt"]
 
 [[permission]]
-identifier = "allow-chat-restart"
-description = "Allows chat_restart."
-commands.allow = ["chat_restart"]
-
-[[permission]]
 identifier = "allow-chat-set-model"
 description = "Allows chat_set_model."
 commands.allow = ["chat_set_model"]
@@ -457,101 +565,6 @@ description = "Allows chat_title."
 commands.allow = ["chat_title"]
 
 [[permission]]
-identifier = "allow-chat-detect-clis"
-description = "Allows chat_detect_clis."
-commands.allow = ["chat_detect_clis"]
-
-[[permission]]
-identifier = "allow-chat-session-info"
-description = "Allows chat_session_info."
-commands.allow = ["chat_session_info"]
-
-[[permission]]
-identifier = "allow-chat-sessions"
-description = "Allows chat_sessions."
-commands.allow = ["chat_sessions"]
-
-[[permission]]
-identifier = "allow-chat-session-rename"
-description = "Allows chat_session_rename."
-commands.allow = ["chat_session_rename"]
-
-[[permission]]
-identifier = "allow-chat-session-delete"
-description = "Allows chat_session_delete."
-commands.allow = ["chat_session_delete"]
-
-[[permission]]
-identifier = "allow-chat-agents"
-description = "Allows chat_agents."
-commands.allow = ["chat_agents"]
-
-[[permission]]
-identifier = "allow-chat-session-transcript"
-description = "Allows chat_session_transcript."
-commands.allow = ["chat_session_transcript"]
-
-[[permission]]
-identifier = "allow-chat-session-title"
-description = "Allows chat_session_title."
-commands.allow = ["chat_session_title"]
-
-[[permission]]
-identifier = "allow-chat-mcp-list"
-description = "Allows chat_mcp_list."
-commands.allow = ["chat_mcp_list"]
-
-[[permission]]
-identifier = "allow-chat-mcp-session"
-description = "Allows chat_mcp_session."
-commands.allow = ["chat_mcp_session"]
-
-[[permission]]
-identifier = "allow-chat-mcp-logout"
-description = "Allows chat_mcp_logout."
-commands.allow = ["chat_mcp_logout"]
-
-[[permission]]
-identifier = "allow-chat-mcp-approve"
-description = "Allows chat_mcp_approve."
-commands.allow = ["chat_mcp_approve"]
-
-[[permission]]
-identifier = "allow-cli-update"
-description = "Allows cli_update."
-commands.allow = ["cli_update"]
-
-[[permission]]
-identifier = "allow-cli-update-status"
-description = "Allows cli_update_status."
-commands.allow = ["cli_update_status"]
-
-[[permission]]
-identifier = "allow-cli-apply-update"
-description = "Allows cli_apply_update."
-commands.allow = ["cli_apply_update"]
-
-[[permission]]
-identifier = "allow-cli-defer-update"
-description = "Allows cli_defer_update."
-commands.allow = ["cli_defer_update"]
-
-[[permission]]
-identifier = "allow-accounts-profile-dir"
-description = "Allows accounts_profile_dir."
-commands.allow = ["accounts_profile_dir"]
-
-[[permission]]
-identifier = "allow-accounts-logout"
-description = "Allows accounts_logout."
-commands.allow = ["accounts_logout"]
-
-[[permission]]
-identifier = "allow-accounts-list"
-description = "Allows accounts_list."
-commands.allow = ["accounts_list"]
-
-[[permission]]
 identifier = "allow-clichat-start"
 description = "Allows clichat_start."
 commands.allow = ["clichat_start"]
@@ -565,6 +578,11 @@ commands.allow = ["clichat_restart"]
 identifier = "allow-clichat-send"
 description = "Allows clichat_send."
 commands.allow = ["clichat_send"]
+
+[[permission]]
+identifier = "allow-clichat-steer"
+description = "Allows clichat_steer."
+commands.allow = ["clichat_steer"]
 
 [[permission]]
 identifier = "allow-clichat-keys"

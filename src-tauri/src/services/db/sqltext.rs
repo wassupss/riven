@@ -10,7 +10,7 @@
 // char index pick out the same statements.
 
 use super::Kind;
-use crate::services::chat::util::js_trim;
+use crate::services::util::js_trim;
 use regex::Regex;
 use std::sync::OnceLock;
 

@@ -305,8 +305,24 @@ fn parse_rec(v: &Value) -> Option<(String, Rec)> {
       _ => {}
     },
     // Attachments are context for the model (environment, hook results,
-    // file snapshots); they stay in the chain but draw nothing.
-    _ => {}
+    // file snapshots); they stay in the chain but draw nothing. Except a
+    // message typed while a turn ran: the CLI queues it and hands it to the
+    // model at the next tool boundary as a queued_command attachment, never
+    // as a user record (2.1.330, verified), so it is drawn as one here.
+    _ => {
+      let a = v.get("attachment").unwrap_or(&Value::Null);
+      if a.get("type").and_then(Value::as_str) == Some("queued_command") {
+        match a.get("prompt") {
+          Some(Value::String(text)) => user_text_items(&uuid, text, 0, &mut items),
+          Some(Value::Array(blocks)) => {
+            let text = blocks.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("text")).filter_map(|b| b.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+            let images = blocks.iter().filter(|b| b.get("type").and_then(Value::as_str) == Some("image")).count() as u32;
+            user_text_items(&uuid, &text, images, &mut items);
+          }
+          _ => {}
+        }
+      }
+    }
   }
   Some((uuid, Rec { parent, logical_parent, items }))
 }
@@ -487,7 +503,7 @@ impl Tail {
 /// <config>/projects/<cwd with every non-alphanumeric char as '-'>: the
 /// CLI's rule, shared with the session list (services/chat/history.rs).
 pub fn project_dir(cwd: &str, config_dir: Option<&str>) -> PathBuf {
-  crate::services::chat::history::project_dir(cwd, config_dir)
+  crate::services::agentcli::history::project_dir(cwd, config_dir)
 }
 
 /// Where the session's transcript is, or will be.
@@ -616,6 +632,25 @@ mod tests {
     assert_eq!(u[0]["cacheRead"], 1900);
     assert_eq!(u[0]["cacheWrite"], 105);
     assert_eq!(u[0]["requests"], 2);
+  }
+
+  #[test]
+  fn a_message_typed_mid_turn_is_drawn_where_the_cli_delivered_it() {
+    // 2.1.330: typed while a tool ran, queued by the CLI, handed to the model
+    // after the tool result as a queued_command attachment.
+    let lines = [
+      r#"{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"message":{"role":"user","content":"run it"}}"#,
+      r#"{"type":"assistant","uuid":"m1","parentUuid":"u1","isSidechain":false,"message":{"id":"msg_1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"sleep 15"}}]}}"#,
+      r#"{"type":"queue-operation","operation":"enqueue","content":"also this","sessionId":"s"}"#,
+      r#"{"type":"user","uuid":"r1","parentUuid":"m1","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":""}]}}"#,
+      r#"{"type":"attachment","uuid":"q1","parentUuid":"r1","isSidechain":false,"attachment":{"type":"queued_command","prompt":"also this","commandMode":"prompt"}}"#,
+      r#"{"type":"assistant","uuid":"m2","parentUuid":"q1","isSidechain":false,"message":{"id":"msg_2","content":[{"type":"text","text":"done"}]}}"#,
+    ];
+    let mut st = Store::default();
+    for l in lines {
+      st.ingest(l);
+    }
+    assert_eq!(kinds(&st.branch()), ["user:run it", "tool:Bash", "result:t1", "user:also this", "text:done"]);
   }
 
   #[test]

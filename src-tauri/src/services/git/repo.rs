@@ -3,7 +3,7 @@
 // answers as the Node module.
 
 use super::{basename, dirname, exec, join, Out, DEFAULT_MAX_BUFFER};
-use crate::services::chat::util::{js_string, js_trim, truthy};
+use crate::services::util::{js_string, js_trim, truthy};
 use crate::services::collate::locale_compare;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};

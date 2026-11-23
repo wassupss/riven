@@ -7,7 +7,7 @@
 // same keys and shape as the Node build wrote) plus what live sessions report
 // in their init event.
 
-use super::util::{self, run, Run};
+use crate::services::util::{self, run, Run};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -444,7 +444,7 @@ pub async fn ensure_profile_plugins(config_dir: &str) {
       return;
     }
     let enabled = read(&home.join("settings.json")).get("enabledPlugins").cloned();
-    let Some(enabled) = enabled.filter(|e| super::util::truthy(Some(e))) else { return };
+    let Some(enabled) = enabled.filter(|e| crate::services::util::truthy(Some(e))) else { return };
     settings.as_object_mut().unwrap().insert("enabledPlugins".into(), enabled);
     let _ = std::fs::write(&file, serde_json::to_string_pretty(&settings).unwrap_or_default());
   })
@@ -452,7 +452,7 @@ pub async fn ensure_profile_plugins(config_dir: &str) {
 }
 
 fn truthy_key(v: &Value, k: &str) -> bool {
-  super::util::truthy(v.get(k))
+  crate::services::util::truthy(v.get(k))
 }
 
 // ---- the environment probe (slash commands + MCP status) -------------------------------
@@ -535,7 +535,7 @@ pub async fn fetch_session_info(cwd: String, config_dir: Option<String>, fresh: 
 async fn probe_session_info(cwd: String, config_dir: Option<String>, k: String) -> SessionInfo {
   use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
   let Some(cmd) = util::resolve_bin("claude").await else { return SessionInfo::default() };
-  let mcp_config = super::mcp_env("probe", "", &[]).get("mcpConfig").and_then(Value::as_str).map(str::to_string);
+  let mcp_config = crate::services::mcp::chat_env("probe", "", &[]).get("mcpConfig").and_then(Value::as_str).map(str::to_string);
   let mut args: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence"].iter().map(|s| s.to_string()).collect();
   if let Some(c) = mcp_config {
     args.push("--mcp-config".into());

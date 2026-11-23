@@ -327,6 +327,9 @@ const api = {
       ipcRenderer.invoke('clichat:restart', key, opts),
     // Image paths are pasted after the text (the CLI attaches them).
     send: (key: string, text: string, images?: string[]): void => ipcRenderer.send('clichat:send', key, text, images ?? []),
+    // Into the running turn now (the queue's "send now"): typed, then the
+    // CLI's own send-now key; an ordinary message when no turn runs.
+    steer: (key: string, text: string, images?: string[]): void => ipcRenderer.send('clichat:steer', key, text, images ?? []),
     // Raw keys for the CLI (Esc on a menu).
     keys: (key: string, data: string): void => ipcRenderer.send('clichat:keys', key, data),
     // Pick an option of the TUI menu on screen (text: for a text option).
@@ -430,6 +433,11 @@ const api = {
       ipcRenderer.invoke('chat:sessionRename', cwd, id, title, configDir),
     sessionDelete: (cwd: string, id: string, configDir?: string): Promise<boolean> =>
       ipcRenderer.invoke('chat:sessionDelete', cwd, id, configDir),
+    // Codex's conversations in this folder (its rollouts), newest first.
+    codexSessions: (cwd: string): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
+      ipcRenderer.invoke('chat:codexSessions', cwd),
+    // `codex delete --force <id>`: Codex removes the conversation itself.
+    codexSessionDelete: (id: string): Promise<boolean> => ipcRenderer.invoke('chat:codexSessionDelete', id),
     agents: (
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>

@@ -1050,6 +1050,7 @@ fn main() {
       services::mcp::init(app.handle());
       services::pty::init(app.handle());
       services::clichat::init(app.handle());
+      services::agentcli::init(app.handle());
       services::chat::init(app.handle());
       services::lsp::init(app.handle());
       services::debug::init(app.handle());

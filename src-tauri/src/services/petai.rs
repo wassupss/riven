@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::chat::util::{login_path, resolve_bin, sigterm};
+use super::util::{login_path, resolve_bin, sigterm};
 
 /// A parent Claude Code session leaves these in the environment (riven itself
 /// started from a Claude session, in development). A CLI that sees them
@@ -149,7 +149,7 @@ pub fn claude_result(out: &str) -> Value {
     if !t.starts_with('{') {
       continue;
     }
-    if let Some(v) = super::chat::util::parse(t) {
+    if let Some(v) = super::util::parse(t) {
       if v.get("type").and_then(Value::as_str) == Some("result") {
         last = Some(v);
       }

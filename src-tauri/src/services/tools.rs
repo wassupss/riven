@@ -243,7 +243,7 @@ pub fn parse_models_line(line: &str) -> Option<Value> {
 
 async fn probe(config_dir: Option<String>) -> Option<Value> {
   use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-  let cmd = crate::services::chat::util::resolve_bin("claude").await?;
+  let cmd = crate::services::util::resolve_bin("claude").await?;
   let mut c = crate::services::shell_env::tokio_command(&cmd);
   c.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence"])
     .stdin(std::process::Stdio::piped())

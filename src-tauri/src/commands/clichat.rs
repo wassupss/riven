@@ -22,6 +22,12 @@ pub fn clichat_send(key: String, text: String, images: Option<Vec<String>>) {
   clichat::send(&key, text, images.unwrap_or_default())
 }
 
+/// A message pushed into the running turn now (the queue's "send now").
+#[tauri::command]
+pub fn clichat_steer(key: String, text: String, images: Option<Vec<String>>) {
+  clichat::steer(&key, text, images.unwrap_or_default())
+}
+
 #[tauri::command]
 pub fn clichat_keys(key: String, data: String) {
   clichat::keys(&key, data)

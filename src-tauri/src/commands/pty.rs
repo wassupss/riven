@@ -59,7 +59,7 @@ pub fn pty_kill(id: String) {
 #[tauri::command]
 pub async fn pty_codex_session_title(id: serde_json::Value) -> Option<String> {
   let id = id.as_str()?.to_string();
-  tokio::task::spawn_blocking(move || crate::services::chat::read_codex_session_title(&id)).await.ok().flatten()
+  tokio::task::spawn_blocking(move || crate::services::agentcli::history::read_codex_session_title(&id)).await.ok().flatten()
 }
 
 // A paired phone looking at, or typing into, a terminal (state/remoteTerms.ts
