@@ -1,8 +1,7 @@
 name: Release
 
-# Push a version tag (e.g. v0.0.3) → build, sign, notarize, staple on a macOS
-# runner, then attach the dmg/zip to a GitHub Release. The slow notarization
-# wait happens here, not on your laptop.
+# Push a version tag (e.g. v1.0.1) → the Windows Electron build, plus the Mac
+# assets carried over from the newest Tauri release (see release-mac).
 on:
   push:
     tags:
@@ -12,69 +11,29 @@ permissions:
   contents: write # needed to create/update the GitHub Release
 
 jobs:
+  # The Mac app is the Tauri build now (release-tauri.yml, tauri-v* tags). A
+  # v* release still becomes "latest", and Macs still on Electron read
+  # latest-mac.yml from "latest": carry the newest published Tauri release's
+  # Electron-feed assets so they keep moving to Tauri, never back to Electron.
   release-mac:
-    # macos-15 is an Apple Silicon (arm64) runner (macos-14 was retired), matching
-    # our arm64 target,
-    # so node-pty and the app build natively.
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      # postinstall runs electron-rebuild for node-pty against the Electron ABI.
-      - name: Install dependencies
-        run: npm ci
-
-      # VITE_SUPABASE_* are baked into the renderer at build time (and are public
-      # client values — the anon key is RLS-protected, not a secret). CI has no
-      # .env, so write one from the repo secrets/vars to enable account sync in
-      # released builds. Safe to skip if the vars are unset (feature stays off).
-      - name: Configure Supabase env
-        run: |
-          {
-            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
-            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
-            echo "VITE_SUPABASE_REDIRECT=${{ secrets.VITE_SUPABASE_REDIRECT }}"
-          } > .env
-
-      - name: Build · sign · notarize · staple
+      - name: Carry the Tauri Mac assets
         env:
-          # Signing cert: base64 of the exported "Developer ID Application" .p12.
-          # electron-builder imports it into a temp keychain automatically.
-          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          # Notarization credentials (read by electron-builder's notarize step).
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist
-
-      # electron-builder notarizes the app (inside the zip) but not the dmg
-      # container itself, so the downloaded dmg would trip Gatekeeper on first
-      # open. Notarize + staple the dmg directly.
-      - name: Notarize & staple the DMG
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          DMG=$(ls release/*.dmg | head -1)
-          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
-          xcrun stapler staple "$DMG"
-          xcrun stapler validate "$DMG"
+          T=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '[.[].tagName | select(startswith("tauri-v"))][0]')
+          [ -n "$T" ] || { echo "::error::no published tauri-v release to carry"; exit 1; }
+          echo "carrying Mac assets from $T"
+          mkdir -p release
+          gh release download "$T" --repo "$GITHUB_REPOSITORY" --dir release --pattern 'latest-mac.yml' --pattern '*-mac.zip'
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/*.dmg
-            release/*.zip
+            release/*-mac.zip
             release/latest-mac.yml
-            release/*.blockmap
           fail_on_unmatched_files: true
           generate_release_notes: true
 
