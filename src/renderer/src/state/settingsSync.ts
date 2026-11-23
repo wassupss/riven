@@ -21,6 +21,7 @@ const SYNC_EXCLUDE: ReadonlySet<string> = new Set([
   'remoteDeskSecret',
   'remoteDevices',
   'remoteOwner',
+  'remoteTermAudit',
   ...REMOVED_SETTINGS
 ])
 

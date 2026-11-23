@@ -1,0 +1,104 @@
+/* Remote terminals (state/remoteTerms): what a phone looking at a terminal
+   looks like on the computer. */
+
+/* Over the terminal, not above it: a strip in the flow would shrink the grid,
+   and a resize makes the CLI redraw just because someone looked. */
+.term-remote-badge {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  padding: 3px 4px 3px 9px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  color: var(--warning);
+  background: color-mix(in srgb, var(--bg-2) 88%, var(--warning));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 30%);
+}
+.term-remote-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.term-remote-stop {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 0;
+  font: inherit;
+  color: #fff;
+  background: var(--danger);
+  cursor: pointer;
+}
+.term-remote-stop:hover {
+  filter: brightness(1.1);
+}
+
+/* The tab of a terminal shown on phones, and its menu item. */
+.riven-tab-remote {
+  display: inline-flex;
+  align-items: center;
+  color: var(--warning);
+}
+.remote-share-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.remote-share-check {
+  display: inline-flex;
+  width: 12px;
+}
+
+/* Settings › Remote: per phone terminal access, and the input log. */
+.remote-term-access {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 6px;
+}
+.remote-term-access label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.remote-audit {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow: auto;
+  margin: 4px 0 8px;
+  font-size: var(--text-xs);
+}
+.remote-audit-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 10px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+}
+.remote-audit-row:nth-child(odd) {
+  background: var(--hover);
+}
+.remote-audit-row .what {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-audit-row .bad {
+  color: var(--danger);
+}
+.remote-audit-time {
+  font-variant-numeric: tabular-nums;
+}

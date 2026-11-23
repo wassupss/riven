@@ -916,6 +916,127 @@ async fn probe_loop(s: Arc<Session>) {
   }
 }
 
+// ---- remote (a paired phone, see src/renderer/src/state/remoteTerms.ts) ---------
+//
+// The page decides WHO may look and type (the device's capabilities, the
+// pane's opt-in) and redacts what it sends. These two are the last gate and do
+// not trust the page either: text is only read from the model, and input is
+// limited to a fixed set of keys or one cleaned line, written only while an
+// agent is the terminal's foreground program. No raw bytes from a phone ever
+// reach a pty.
+
+/// Longest line a phone may type, in characters.
+const REMOTE_LINE_MAX: usize = 500;
+/// The pause between a typed line and its Enter (askAgent.ts says why).
+const REMOTE_ENTER_DELAY: Duration = Duration::from_millis(120);
+
+#[derive(Serialize)]
+pub struct RemoteText {
+  /// What the text reflects: parsed chunks and size. Equal = unchanged.
+  pub rev: String,
+  /// The last lines, or None when `rev` is what the caller already has.
+  pub text: Option<String>,
+  /// An agent is the foreground program right now.
+  pub agent: bool,
+}
+
+/// The tail of a terminal as plain text, for a phone watching it. Formats
+/// only when the model moved since `since`, so an idle watched pane costs a
+/// lock and a compare.
+pub fn remote_text(key: &str, lines: usize, since: &str) -> Option<RemoteText> {
+  let s = get(key)?;
+  let st = lock(&s);
+  if st.dead {
+    return None;
+  }
+  let rev = format!("{}:{}x{}", st.parsed, st.cols, st.rows);
+  let agent = st.agent_present;
+  if rev == since {
+    return Some(RemoteText { rev, text: None, agent });
+  }
+  let all = st.model.text();
+  drop(st);
+  Some(RemoteText { rev, text: Some(last_lines(&all, lines)), agent })
+}
+
+fn last_lines(all: &str, n: usize) -> String {
+  let trimmed = all.trim_end_matches(['\n', ' ']);
+  let lines: Vec<&str> = trimmed.split('\n').collect();
+  lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// The bytes of a key a phone may press: answering a prompt, nothing more.
+/// Ctrl+C and every other control key are deliberately absent.
+fn remote_key(k: &str) -> Option<&'static str> {
+  Some(match k {
+    "1" => "1",
+    "2" => "2",
+    "3" => "3",
+    "4" => "4",
+    "5" => "5",
+    "6" => "6",
+    "7" => "7",
+    "8" => "8",
+    "9" => "9",
+    "enter" => "\r",
+    "esc" => "\x1b",
+    "up" => "\x1b[A",
+    "down" => "\x1b[B",
+    _ => return None,
+  })
+}
+
+/// One line of prompt text with every control character gone: no ESC (so no
+/// bracketed-paste end marker or any other sequence), no CR/LF (so it cannot
+/// submit early or become two prompts), no C1, and no invisible or
+/// direction-changing format characters. None if nothing usable is left.
+fn clean_remote_line(t: &str) -> Option<String> {
+  let kept: String = t
+    .chars()
+    .filter(|&c| {
+      !c.is_control()
+        && !matches!(c, '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+    })
+    .collect();
+  let kept = kept.trim();
+  if kept.is_empty() || kept.chars().count() > REMOTE_LINE_MAX {
+    return None;
+  }
+  Some(kept.to_string())
+}
+
+/// Type into a terminal for a phone: exactly one of `text` (a line, then
+/// Enter) or `key` (one of remote_key's). False if refused.
+pub fn remote_input(key: &str, text: Option<&str>, k: Option<&str>) -> bool {
+  let (data, submit) = match (text, k) {
+    (Some(t), None) => match clean_remote_line(t) {
+      Some(c) => (c, true),
+      None => return false,
+    },
+    (None, Some(k)) => match remote_key(k) {
+      Some(b) => (b.to_string(), false),
+      None => return false,
+    },
+    _ => return false,
+  };
+  let Some(s) = get(key) else { return false };
+  {
+    let st = lock(&s);
+    if st.dead || !st.agent_present {
+      return false;
+    }
+  }
+  ctl(Op::Write(key.to_string(), data));
+  if submit {
+    let key = key.to_string();
+    tauri::async_runtime::spawn(async move {
+      tokio::time::sleep(REMOTE_ENTER_DELAY).await;
+      ctl(Op::Write(key, "\r".into()));
+    });
+  }
+  true
+}
+
 // ---- text -----------------------------------------------------------------------
 
 // Decode a read into whole characters. Invalid sequences become U+FFFD (as
@@ -981,6 +1102,22 @@ mod tests {
     assert!(carry.is_empty());
     assert_eq!(decode_utf8(&mut carry, b"x\xffy"), "x\u{FFFD}y");
     assert_eq!(utf16_len("a한😀"), 4);
+  }
+
+  #[test]
+  fn remote_input_is_cleaned_and_bounded() {
+    assert_eq!(clean_remote_line("  fix the bug  ").as_deref(), Some("fix the bug"));
+    // Bracketed-paste end marker, CR/LF, Ctrl+C, C1 and bidi overrides are gone.
+    assert_eq!(clean_remote_line("a\x1b[201~b\r\nc\x03\u{9b}d\u{202e}e").as_deref(), Some("a[201~bcde"));
+    assert_eq!(clean_remote_line("\x1b\r\n"), None);
+    assert!(clean_remote_line(&"x".repeat(REMOTE_LINE_MAX)).is_some());
+    assert!(clean_remote_line(&"x".repeat(REMOTE_LINE_MAX + 1)).is_none());
+    assert_eq!(remote_key("enter"), Some("\r"));
+    assert_eq!(remote_key("up"), Some("\x1b[A"));
+    assert_eq!(remote_key("0"), None);
+    assert_eq!(remote_key("ctrl+c"), None);
+    assert_eq!(remote_key("\x03"), None);
+    assert_eq!(last_lines("a\nb\nc\n\n", 2), "b\nc");
   }
 
   #[test]

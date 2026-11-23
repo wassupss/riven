@@ -315,6 +315,63 @@ export interface NewJob {
   target: RemoteJobTarget
 }
 
+// ---- terminals -------------------------------------------------------------------
+//
+// A phone may see, and in a narrow way type into, a CLI agent running in one of
+// the computer's terminals. Nothing here is on by default: the computer's user
+// turns on "terminal view" (and separately "terminal input") per device in
+// the computer's settings, and marks each terminal that may be shown. There is
+// no message by which a phone could grant itself either. Old clients on either
+// end simply drop these kinds (unknown `t`).
+
+/** A terminal the computer's user chose to show on phones. */
+export interface RemoteTerm {
+  id: string // pane key
+  workspace: string // display name
+  title: string
+  /** The CLI agent in the foreground ('claude', 'codex', ...). */
+  agent: string
+  status: AgentStatus
+  /** This phone may type into it right now. */
+  canInput: boolean
+}
+
+/** The keys a phone may press in a terminal: enough to answer a CLI's prompt. No Ctrl+C. */
+export const TERM_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'enter', 'esc', 'up', 'down'] as const
+export type TermKey = (typeof TERM_KEYS)[number]
+
+/** What a phone types: one line of prompt text (Enter is added), or one key. Never raw bytes. */
+export type TermInput = { kind: 'line'; text: string } | { kind: 'key'; key: TermKey }
+
+/** Longest line a phone may type. */
+export const TERM_LINE_MAX = 500
+
+/**
+ * A line as it may be typed: every control character gone (ESC, so no
+ * bracketed-paste marker or other sequence; CR/LF, so it cannot submit early
+ * or split into two prompts; C1), and the invisible or direction-changing
+ * format characters with them. Trimmed. The computer's terminal side applies
+ * the same rule again.
+ */
+export function cleanTermLine(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, '').trim()
+}
+
+function parseTermInput(v: unknown): TermInput | null {
+  const i = v as Record<string, unknown> | null
+  if (!i || typeof i !== 'object') return null
+  if (i.kind === 'key') return (TERM_KEYS as readonly unknown[]).includes(i.key) ? { kind: 'key', key: i.key as TermKey } : null
+  if (i.kind === 'line' && typeof i.text === 'string' && i.text.length <= TERM_LINE_MAX * 2) {
+    const text = cleanTermLine(i.text)
+    return text && text.length <= TERM_LINE_MAX ? { kind: 'line', text } : null
+  }
+  return null
+}
+
+/** Why a terminal stopped being shown to a phone. */
+export type TermGone = 'not-shared' | 'no-access' | 'closed' | 'stopped'
+
 /** Desk → phone. */
 export type DeskMsg =
   | { t: 'paired'; name: string }
@@ -340,6 +397,11 @@ export type DeskMsg =
       outcome: 'done' | 'stopped' | 'failed'
       durationMs?: number
     }
+  /** The shared terminals. `allowed` false: this phone may not view terminals at all. */
+  | { t: 'terms'; allowed: boolean; terms: RemoteTerm[] }
+  /** A watched terminal's last lines, secrets redacted. `now` is the computer's clock. */
+  | { t: 'termScreen'; termKey: string; text: string; now: number; canInput: boolean }
+  | { t: 'termGone'; termKey: string; reason: TermGone }
 
 /**
  * Phone → desk. This list IS what a phone may do: there is no message for
@@ -364,6 +426,10 @@ export type PhoneMsg =
   | { t: 'jobRun'; reqId: string; id: string }
   | { t: 'jobDelete'; reqId: string; id: string }
   | { t: 'jobAdd'; reqId: string; job: NewJob }
+  | { t: 'terms' }
+  /** The terminal this phone has open (null: none). Its screen is sent while it is. */
+  | { t: 'termWatch'; termKey: string | null }
+  | { t: 'termInput'; reqId: string; termKey: string; input: TermInput }
 
 export const MAX_TEXT = 20_000
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
@@ -461,6 +527,16 @@ export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | nul
     case 'jobAdd': {
       const job = parseNewJob(m.job)
       return str(m.reqId, 64) && job ? { t: 'jobAdd', reqId: m.reqId, job } : null
+    }
+    case 'terms':
+      return { t: 'terms' }
+    case 'termWatch':
+      return m.termKey === null || str(m.termKey, 200) ? { t: 'termWatch', termKey: m.termKey as string | null } : null
+    case 'termInput': {
+      const input = parseTermInput(m.input)
+      return str(m.reqId, 64) && str(m.termKey, 200) && input
+        ? { t: 'termInput', reqId: m.reqId, termKey: m.termKey, input }
+        : null
     }
     default:
       return null

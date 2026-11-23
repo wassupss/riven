@@ -65,6 +65,9 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pty:resize': ['id', 'cols', 'rows'],
   'pty:kill': ['id'],
   'pty:codexSessionTitle': ['id'],
+  // a paired phone (state/remoteTerms.ts)
+  'pty:remoteText': ['id', 'lines', 'since'],
+  'pty:remoteInput': ['id', 'text', 'key'],
   // agent chat (services/chat). Stream events come back as 'chat:event'.
   'chat:start': ['key', 'opts'],
   'chat:send': ['key', 'text', 'images', 'turn'],

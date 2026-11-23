@@ -40,6 +40,8 @@ export default function ComputerLayout(): JSX.Element {
           <Stack.Screen name="chat" options={{ title: '' }} />
           <Stack.Screen name="jobs" options={{ title: '예약 작업' }} />
           <Stack.Screen name="job-new" options={{ title: '새 예약 작업' }} />
+          <Stack.Screen name="terms" options={{ title: '터미널' }} />
+          <Stack.Screen name="term" options={{ title: '' }} />
         </Stack>
         {/* Over every screen of this computer, so a chat's errors show too. */}
         {toast && (

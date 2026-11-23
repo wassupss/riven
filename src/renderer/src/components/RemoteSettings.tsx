@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import '../styles/remote-settings.css'
+import '../styles/remote-terms.css'
+import { clearTermAudit, setTermAccess, stopAllRemoteTerminals } from '../state/remoteTerms'
 import { useT } from '../i18n'
 import { useSettings } from '../state/settings'
 import { cancelInvite, newInvite, resetRemote, revokeDevice, useRemote } from '../state/remote'
@@ -16,6 +18,7 @@ export default function RemoteSettings(): JSX.Element {
   const t = useT()
   const enabled = useSettings((s) => s.settings.remoteEnabled)
   const devices = useSettings((s) => s.settings.remoteDevices)
+  const audit = useSettings((s) => s.settings.remoteTermAudit)
   const set = useSettings((s) => s.set)
   const { state, present, invite } = useRemote()
   const [qr, setQr] = useState<string | null>(null)
@@ -133,12 +136,71 @@ export default function RemoteSettings(): JSX.Element {
                   <span className="set-rowdesc">
                     {d.platform} · {t('remote.addedAt', { when: new Date(d.addedAt).toLocaleDateString() })}
                   </span>
+                  {/* Terminal access: off for every phone until turned on here. */}
+                  <span className="remote-term-access">
+                    <label>
+                      <Switch checked={!!d.termView} onChange={(on) => setTermAccess(d.id, { termView: on })} />
+                      {t('remoteTerm.view')}
+                    </label>
+                    <label>
+                      <Switch
+                        checked={!!d.termView && !!d.termInput}
+                        disabled={!d.termView}
+                        onChange={(on) => setTermAccess(d.id, { termInput: on })}
+                      />
+                      {t('remoteTerm.input')}
+                    </label>
+                  </span>
                 </div>
                 <div className="set-rowctl">
                   <Button onClick={() => revokeDevice(d.id)}>{t('remote.revoke')}</Button>
                 </div>
               </div>
             ))
+          )}
+
+          <div className="section-label">{t('remoteTerm.section')}</div>
+          <p className="remote-note">{t('remoteTerm.sectionDesc')}</p>
+          <div className="set-row">
+            <div className="set-rowinfo">
+              <span className="set-rowtitle">{t('remoteTerm.stopAll')}</span>
+              <span className="set-rowdesc">{t('remoteTerm.stopAllDesc')}</span>
+            </div>
+            <div className="set-rowctl">
+              <Button onClick={() => stopAllRemoteTerminals()} disabled={!devices.some((d) => d.termView || d.termInput)}>
+                {t('remoteTerm.stop')}
+              </Button>
+            </div>
+          </div>
+          <div className="set-row">
+            <div className="set-rowinfo">
+              <span className="set-rowtitle">{t('remoteTerm.audit')}</span>
+              <span className="set-rowdesc">{t('remoteTerm.auditDesc')}</span>
+            </div>
+            <div className="set-rowctl">
+              <Button onClick={() => clearTermAudit()} disabled={audit.length === 0}>
+                {t('remoteTerm.auditClear')}
+              </Button>
+            </div>
+          </div>
+          {audit.length === 0 ? (
+            <p className="remote-note">{t('remoteTerm.auditEmpty')}</p>
+          ) : (
+            <div className="remote-audit">
+              {audit
+                .slice(-50)
+                .reverse()
+                .map((a, i) => (
+                  <div className="remote-audit-row" key={`${a.at}-${i}`}>
+                    <span className="remote-audit-time">{new Date(a.at).toLocaleString()}</span>
+                    <span>{a.device}</span>
+                    <span className="what" title={a.preview ?? ''}>
+                      {a.pane} · {a.what === 'line' ? t('remoteTerm.line', { text: a.preview ?? '' }) : t('remoteTerm.key', { key: a.what })}
+                    </span>
+                    <span className={a.ok ? '' : 'bad'}>{a.ok ? t('remoteTerm.ok') : t('remoteTerm.refused', { why: a.error ?? '' })}</span>
+                  </div>
+                ))}
+            </div>
           )}
 
           <div className="set-row">

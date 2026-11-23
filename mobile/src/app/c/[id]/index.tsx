@@ -7,16 +7,10 @@ import { UsageCard } from '@/components/UsageCard'
 import { forgetComputer } from '@/lib/computers'
 import { useComputerCtx } from '@/lib/ComputerContext'
 import { C, R } from '@/lib/theme'
+import { STATUS } from '@/lib/status'
 
 // One computer: its agents by workspace and the questions they are waiting on.
 // A chat agent opens its own message screen.
-
-export const STATUS: Record<RemoteAgent['status'], { label: string; color: string }> = {
-  busy: { label: '실행 중', color: C.accent },
-  waiting: { label: '확인 필요', color: C.warn },
-  done: { label: '완료', color: C.ok },
-  idle: { label: '대기', color: C.dim }
-}
 
 export default function ComputerScreen(): JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>()
@@ -93,6 +87,11 @@ export default function ComputerScreen(): JSX.Element {
             <Pressable style={s.jobsRow} onPress={() => router.push({ pathname: '/c/[id]/jobs', params: { id } })}>
               <Ionicons name="calendar-outline" size={18} color={C.accent} />
               <Text style={s.jobsText}>예약 작업</Text>
+              <Ionicons name="chevron-forward" size={18} color={C.dim} />
+            </Pressable>
+            <Pressable style={s.jobsRow} onPress={() => router.push({ pathname: '/c/[id]/terms', params: { id } })}>
+              <Ionicons name="terminal-outline" size={18} color={C.accent} />
+              <Text style={s.jobsText}>터미널</Text>
               <Ionicons name="chevron-forward" size={18} color={C.dim} />
             </Pressable>
             {link.asks.length ? (
