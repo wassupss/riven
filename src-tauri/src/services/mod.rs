@@ -4,6 +4,7 @@
 
 pub mod atomic;
 pub mod auth;
+pub mod backgrounds;
 pub mod browser;
 pub mod chat;
 pub mod collate;

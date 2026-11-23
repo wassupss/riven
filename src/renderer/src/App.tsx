@@ -46,6 +46,7 @@ import { applyTheme } from './state/themes'
 import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
 import { registerSnippets } from './editor/snippets'
 import { injectImportedFonts } from './state/fonts'
+import { startPanelBackground } from './lib/panelBackground'
 import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
@@ -144,6 +145,7 @@ export default function App(): JSX.Element {
       await loadSettings()
       injectImportedFonts()
       applyTheme(getSettings().theme)
+      startPanelBackground()
       window.api.setZoom(getSettings().uiScale || 1)
       await loadEditorKeymap()
       applyEditorKeymap(getSettings().editorKeymap)

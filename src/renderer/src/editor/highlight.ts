@@ -1,6 +1,8 @@
 import * as monaco from 'monaco-editor'
 import type { HighlighterCore, LanguageInput, ThemeInput } from 'shiki/core'
 import { onShikiTheme } from '../state/themes'
+import { useSettings, getSettings } from '../state/settings'
+import { bgActiveFor } from '../state/panelBackground'
 
 // Monaco's built-in tokenizer doesn't understand JSX and mis-colors it. We swap
 // in Shiki (the same TextMate grammars + themes VSCode uses) so .tsx/.jsx and
@@ -168,8 +170,50 @@ export function editorTheme(): string {
 // Called by the theme system; applies immediately if Shiki is ready.
 export function setShikiTheme(name: string): void {
   currentTheme = name
-  if (shikiReady) monaco.editor.setTheme(name)
+  if (shikiReady) {
+    defineCurrent()
+    monaco.editor.setTheme(name)
+  }
 }
+
+// ---- see-through editor (panel background image) ----------------------------
+// styles/panel-background.css clears the editor's CSS background; the minimap
+// and gutter paint from the theme, so the current theme is redefined (same name,
+// same token rules) with transparent backgrounds while an image is showing,
+// and back to Shiki's own colors when it is not. Only runs when that flips or
+// the theme changes.
+let transparent = bgActiveFor(getSettings(), 'editor')
+let themeSource: ((name: string) => monaco.editor.IStandaloneThemeData) | null = null
+
+const CLEAR = '#00000000'
+export function clearBackgrounds(t: monaco.editor.IStandaloneThemeData): monaco.editor.IStandaloneThemeData {
+  const bg = t.colors['editor.background']
+  return {
+    ...t,
+    colors: {
+      ...t.colors,
+      'editor.background': CLEAR,
+      'editorGutter.background': CLEAR,
+      'minimap.background': CLEAR,
+      // Sticky scroll lies over code: it keeps a solid background to stay legible.
+      ...(bg ? { 'editorStickyScroll.background': bg, 'editorStickyScrollGutter.background': bg } : {})
+    }
+  }
+}
+
+function defineCurrent(): void {
+  const base = themeSource?.(currentTheme)
+  if (base) monaco.editor.defineTheme(currentTheme, transparent ? clearBackgrounds(base) : base)
+}
+
+useSettings.subscribe((st) => {
+  const want = bgActiveFor(st.settings, 'editor')
+  if (want === transparent) return
+  transparent = want
+  if (!shikiReady) return
+  defineCurrent()
+  monaco.editor.setTheme(currentTheme)
+})
 // The theme system calls in through this hook rather than importing this module
 // (see onShikiTheme), so windows without an editor never load Monaco.
 onShikiTheme(setShikiTheme)
@@ -183,7 +227,7 @@ export function initHighlighting(): Promise<void> {
 
 async function start(): Promise<void> {
   try {
-    const [{ createHighlighterCore }, { createOnigurumaEngine }, { shikiToMonaco }] = await Promise.all([
+    const [{ createHighlighterCore }, { createOnigurumaEngine }, { shikiToMonaco, textmateThemeToMonacoTheme }] = await Promise.all([
       import('shiki/core'),
       import('shiki/engine/oniguruma'),
       import('@shikijs/monaco')
@@ -194,7 +238,9 @@ async function start(): Promise<void> {
       langs: []
     })
     attach(highlighter, shikiToMonaco)
+    themeSource = (name) => textmateThemeToMonacoTheme(highlighter.getTheme(name)) as monaco.editor.IStandaloneThemeData
     shikiReady = true
+    defineCurrent()
     monaco.editor.setTheme(currentTheme)
   } catch (e) {
     console.error('[shiki] highlighting init failed', e)

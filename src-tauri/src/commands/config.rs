@@ -23,3 +23,16 @@ pub async fn config_save(name: String, data: Value) -> CmdResult<()> {
 pub fn config_reveal(name: String) {
   fsx::reveal(&paths::user_file(&name));
 }
+
+// ---- background:import / background:remove ----------------------------------
+// The panel background image (services/backgrounds.rs, src/main/backgrounds.ts).
+
+#[tauri::command]
+pub async fn background_import(data_url: String) -> CmdResult<String> {
+  blocking(move || crate::services::backgrounds::import(&data_url)).await?
+}
+
+#[tauri::command]
+pub async fn background_remove() -> CmdResult<()> {
+  blocking(|| crate::services::backgrounds::prune(None)).await
+}

@@ -1,0 +1,114 @@
+/* Panel background image (Settings > appearance; lib/panelBackground.ts).
+
+   lib/panelBackground puts the setting on <html>:
+     data-pbg-app        one image behind the whole dock (.app-bg in Workbench)
+     data-pbg="kind ..." the panel kinds that draw their own copy (.pbg)
+     --pbg-image         url() of the stored copy
+     --pbg-tint          opacity of the theme-coloured tint over the image
+     --pbg-filter        none | blur(Npx)
+
+   Every layer is a static element painted once: no animation, no per-frame
+   work. The tint is the theme's own --bg, so text keeps the contrast the theme
+   was built for, and it follows a theme switch with no JS.
+
+   Workbench wraps each panel in .pbg-host[data-kind] (display: contents, so the
+   dock's layout is untouched) with a .pbg layer first. The layer sits at
+   z-index -1 of the panel's render overlay (dockview gives it isolation:
+   isolate), so it paints just above the overlay and below everything the panel
+   draws, positioned or not. */
+
+.pbg-host {
+  display: contents;
+}
+.pbg,
+.app-bg {
+  display: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--bg);
+}
+.pbg::before,
+.app-bg::before {
+  content: '';
+  position: absolute;
+  /* Blur pulls the transparent outside in at the edges; overscan hides it. */
+  inset: -48px;
+  background: var(--pbg-image) center / cover no-repeat;
+  filter: var(--pbg-filter, none);
+}
+.pbg::after,
+.app-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  opacity: var(--pbg-tint, 1);
+}
+
+/* ---- per panel kind ------------------------------------------------------ */
+:root[data-pbg~='terminal'] .pbg-host[data-kind='terminal'] > .pbg,
+:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] > .pbg,
+:root[data-pbg~='chat'] .pbg-host[data-kind='chat'] > .pbg {
+  display: block;
+}
+.pbg {
+  z-index: -1;
+}
+
+/* ---- the whole dock ------------------------------------------------------ */
+:root[data-pbg-app] .workbench-wrap > .app-bg {
+  display: block;
+}
+:root[data-pbg-app] .workbench {
+  position: relative;
+  --dv-group-view-background-color: transparent;
+  --dv-background-color: transparent;
+}
+
+/* ---- see-through panel roots ---------------------------------------------
+   Only the kinds that show an image; panels of other kinds keep their own
+   background (in app scope they sit on the image like cards). */
+:root[data-pbg~='terminal'] .pbg-host[data-kind='terminal'] .terminal-panel,
+:root[data-pbg-app] .pbg-host[data-kind='terminal'] .terminal-panel,
+:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .editor-panel,
+:root[data-pbg-app] .pbg-host[data-kind='editor'] .editor-panel,
+:root[data-pbg~='chat'] .pbg-host[data-kind='chat'] .chat-panel,
+:root[data-pbg-app] .pbg-host[data-kind='chat'] .chat-panel {
+  background: transparent;
+}
+
+/* Monaco: styles.css forces its background to --bg with !important; the
+   minimap and gutter follow editor/highlight's see-through theme. */
+:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor,
+:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor .monaco-editor-background,
+:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor .margin,
+:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor .margin-view-overlays,
+:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor,
+:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor .monaco-editor-background,
+:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor .margin,
+:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor .margin-view-overlays {
+  background-color: transparent !important;
+}
+
+/* Settings row: the picked image's thumbnail. */
+.pbg-thumb {
+  width: 44px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--edge);
+  background: var(--pbg-image) center / cover no-repeat;
+  flex: none;
+}
+.pbg-range {
+  width: 140px;
+  accent-color: var(--accent);
+}
+.pbg-range-val {
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}

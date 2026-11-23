@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { PANEL_BG_DEFAULTS, sanitizePanelBg, samePanelBg, type PanelBgSettings } from './panelBackground'
 
 // Just the pet (right-click for its menu), or the little handheld it lives in.
 export type PetChrome = 'bare' | 'device'
@@ -14,7 +15,9 @@ export interface RemoteDevice {
   pushToken?: string | null
 }
 
-export interface Settings {
+// The panel background image fields (panelBg*) live in PanelBgSettings: see
+// state/panelBackground.ts. All of them default to "no image".
+export interface Settings extends PanelBgSettings {
   theme: string
   editorKeymap: string
   editorFontFamily: string
@@ -204,7 +207,8 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
-  terminalCursor: '#ff7847'
+  terminalCursor: '#ff7847',
+  ...PANEL_BG_DEFAULTS
 }
 
 interface SettingsState {
@@ -251,7 +255,11 @@ const LEGACY_TERMINAL_FONTS = new Set([
 // pulled from the cloud row (settingsSync), which an older build keeps writing.
 export function migrateLegacy(s: Settings): Settings {
   // The pet's old card and screen-only sizes became the bare pet with a menu.
-  if (s.petChrome !== 'bare' && s.petChrome !== 'device') return { ...s, petChrome: 'bare' }
+  if (s.petChrome !== 'bare' && s.petChrome !== 'device') s = { ...s, petChrome: 'bare' }
+  // A hand-edited or half-written background setting falls back to "off"
+  // rather than reaching the CSS as something unexpected.
+  const bg = sanitizePanelBg(s)
+  if (!samePanelBg(bg, s)) s = { ...s, ...bg }
   return s
 }
 

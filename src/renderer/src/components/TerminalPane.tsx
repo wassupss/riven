@@ -12,6 +12,7 @@ import {
 } from '../keybindings/focus'
 import { useT } from '../i18n'
 import { useSettings, getSettings } from '../state/settings'
+import { bgActiveFor } from '../state/panelBackground'
 
 // The terminal palette derives from the active app theme (CSS vars) so the
 // terminal is part of the same visual system and recolors on theme switch —
@@ -156,7 +157,9 @@ export default function TerminalPane({
         cursorBlink: cfg.terminalCursorBlink,
         cursorStyle: cfg.terminalCursorStyle,
         scrollback: Math.max(200, cfg.terminalScrollback),
-        theme: terminalTheme()
+        theme: terminalTheme(),
+        // A panel background image shows through the default background.
+        transparentBg: bgActiveFor(cfg, 'terminal')
       })
       liveTerm = term
       // Dev/e2e only: the smoke harness (scripts/e2e-terminal-smoke.mjs) reads the
@@ -525,9 +528,27 @@ export default function TerminalPane({
         if (existed) setTimeout(safeFit, 60)
       })()
 
+      // Only the settings a terminal draws with. Any other change (a slider in
+      // Settings dragged across, a toggle elsewhere) used to repaint every
+      // terminal for nothing.
+      const termKey = (s: ReturnType<typeof getSettings>): string =>
+        JSON.stringify([
+          s.terminalFontFamily,
+          s.terminalFontSize,
+          s.terminalCursorStyle,
+          s.terminalCursorBlink,
+          s.terminalScrollback,
+          s.theme,
+          s.uiScale,
+          bgActiveFor(s, 'terminal')
+        ])
+      let lastTermKey = termKey(getSettings())
       disposers.push(
         useSettings.subscribe(() => {
           const s = getSettings()
+          const k = termKey(s)
+          if (k === lastTermKey) return
+          lastTermKey = k
           term.options.fontFamily = s.terminalFontFamily
           term.options.fontSize = s.terminalFontSize
           // Everything that can change in place, changed in place: a setting
@@ -536,6 +557,8 @@ export default function TerminalPane({
           term.options.cursorStyle = s.terminalCursorStyle
           term.options.cursorBlink = s.terminalCursorBlink
           term.options.scrollback = Math.max(200, s.terminalScrollback)
+          // A no-op unless it flips (the options proxy skips equal values).
+          term.options.transparentBg = bgActiveFor(s, 'terminal')
           container.style.setProperty('--term-font', s.terminalFontFamily)
           container.style.setProperty('--term-font-size', `${s.terminalFontSize}px`)
           requestAnimationFrame(() => {

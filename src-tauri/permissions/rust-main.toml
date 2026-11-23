@@ -63,6 +63,8 @@ permissions = [
   "allow-config-load",
   "allow-config-save",
   "allow-config-reveal",
+  "allow-background-import",
+  "allow-background-remove",
   "allow-db-list",
   "allow-db-save",
   "allow-db-delete",
@@ -543,6 +545,16 @@ commands.allow = ["config_save"]
 identifier = "allow-config-reveal"
 description = "Allows config_reveal."
 commands.allow = ["config_reveal"]
+
+[[permission]]
+identifier = "allow-background-import"
+description = "Allows background_import."
+commands.allow = ["background_import"]
+
+[[permission]]
+identifier = "allow-background-remove"
+description = "Allows background_remove."
+commands.allow = ["background_remove"]
 
 [[permission]]
 identifier = "allow-db-list"

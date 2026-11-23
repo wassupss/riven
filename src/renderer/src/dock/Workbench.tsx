@@ -163,9 +163,15 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     // crash shows an inline error INSTEAD of blanking the whole workspace dock.
     // HostScope: popups a panel opens render in the window the panel is drawn in
     // (a popped-out group is a separate window; see lib/hostWindow).
+    // .pbg-host / .pbg: the panel background image layer (styles/panel-
+    // background.css). display: contents and hidden until <html> says this kind
+    // shows one, so switching it on or off is a CSS change: no panel remounts.
     const boxed = (label: string, node: JSX.Element): JSX.Element => (
       <HostScope>
-        <ErrorBoundary label={label}>{node}</ErrorBoundary>
+        <div className="pbg-host" data-kind={label}>
+          <div className="pbg" aria-hidden />
+          <ErrorBoundary label={label}>{node}</ErrorBoundary>
+        </div>
       </HostScope>
     )
     return {
@@ -555,6 +561,8 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
 
   return (
     <div className="workbench-wrap" ref={hostRef}>
+      {/* The whole-dock background image (styles/panel-background.css). */}
+      <div className="app-bg" aria-hidden />
       <DockviewReact
         className="workbench"
         // Resolved against THIS document, not the site root. dockview's default

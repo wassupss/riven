@@ -566,6 +566,33 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.formatOnSave': { ko: '저장 시 자동 포맷', en: 'Format on save' },
   'settings.tabSize': { ko: '탭 크기', en: 'Tab size' },
   'settings.appearance': { ko: '외관', en: 'Appearance' },
+  // ---- panel background image (Settings > general) ----
+  'settings.bg.section': { ko: '배경 이미지', en: 'Background image' },
+  'settings.bg.image': { ko: '이미지', en: 'Image' },
+  'settings.bg.imageDesc': {
+    ko: '앱 데이터 폴더에 사본을 저장하므로 원본을 옮겨도 유지됩니다',
+    en: 'A copy is kept in the app data folder, so the original can move'
+  },
+  'settings.bg.choose': { ko: '이미지 선택', en: 'Choose image' },
+  'settings.bg.change': { ko: '바꾸기', en: 'Change' },
+  'settings.bg.remove': { ko: '제거', en: 'Remove' },
+  'settings.bg.failed': { ko: '이미지를 불러오지 못했습니다: {msg}', en: 'Could not use that image: {msg}' },
+  'settings.bg.scope': { ko: '적용 범위', en: 'Show behind' },
+  'settings.bg.scopeDesc': {
+    ko: '앱 전체는 패널 뒤에 한 장, 패널별은 고른 패널마다 따로 표시합니다',
+    en: 'Whole app puts one image behind the dock; per panel draws it in each chosen panel'
+  },
+  'settings.bg.scopeApp': { ko: '앱 전체', en: 'Whole app' },
+  'settings.bg.scopePanels': { ko: '패널별', en: 'Per panel' },
+  'settings.bg.kindTerminal': { ko: '터미널', en: 'Terminal' },
+  'settings.bg.kindEditor': { ko: '코드 편집기', en: 'Code editor' },
+  'settings.bg.kindChat': { ko: '에이전트 채팅', en: 'Agent chat' },
+  'settings.bg.opacity': { ko: '이미지 선명도', en: 'Image strength' },
+  'settings.bg.opacityDesc': {
+    ko: '낮을수록 테마 색이 더 덮여 글자가 잘 보입니다',
+    en: 'Lower lays more of the theme colour over it, which keeps text readable'
+  },
+  'settings.bg.blur': { ko: '흐림', en: 'Blur' },
   'settings.languageDesc': { ko: '인터페이스 언어', en: 'Interface language' },
   'settings.uiScale': { ko: 'UI 배율', en: 'UI scale' },
   'settings.uiScaleDesc': { ko: '전체 인터페이스 확대/축소 (⌘+ / ⌘- / ⌘0)', en: 'Zoom the whole interface (⌘+ / ⌘- / ⌘0)' },

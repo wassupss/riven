@@ -148,6 +148,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     lsp::lsp_stop_root,
     config::config_save,
     config::config_reveal,
+    config::background_import,
+    config::background_remove,
     sessions::sessions_load,
     sessions::sessions_save,
     store::store_load_all,

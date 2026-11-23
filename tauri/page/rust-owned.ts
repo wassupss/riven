@@ -18,6 +18,8 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'config:load': ['name'],
   'config:save': ['name', 'data'],
   'config:reveal': ['name'],
+  'background:import': ['dataUrl'],
+  'background:remove': [],
   // sessions
   'sessions:load': [],
   'sessions:save': ['data'],

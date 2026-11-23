@@ -12,6 +12,9 @@
 //   /__riven/media/<path>   a workspace file as media (src/main/media.ts's
 //                           riven-media scheme): confined to the open
 //                           workspaces, Range for video seeking, HEAD from a stat.
+//   /__riven/bg/<name>      the panel background image: one file name of the
+//                           shape services/backgrounds.rs hands out, read from
+//                           userData/backgrounds and nowhere else.
 //   /__riven/blank.html     an empty page (the localStorage move, lsmigrate.rs)
 //
 // A page on a scheme registered here is "local" to Tauri, so its IPC needs no
@@ -42,6 +45,9 @@ pub fn handle(app: &AppHandle, label: &str, req: &Request<Vec<u8>>) -> Response<
   }
   if let Some(enc) = path.strip_prefix("/__riven/media/") {
     return media(req, enc);
+  }
+  if let Some(name) = path.strip_prefix("/__riven/bg/") {
+    return background(name);
   }
   asset(app, path)
 }
@@ -95,6 +101,21 @@ fn status(code: StatusCode) -> Response<Vec<u8>> {
 
 fn ok(mime: &str, body: Vec<u8>) -> Response<Vec<u8>> {
   Response::builder().status(StatusCode::OK).header(header::CONTENT_TYPE, mime).body(body).unwrap()
+}
+
+// ---- background ----------------------------------------------------------------
+
+/// The name is the content hash, so the answer never changes: cache it for good.
+fn background(name: &str) -> Response<Vec<u8>> {
+  let Some(file) = crate::services::backgrounds::file_for(name) else { return status(StatusCode::NOT_FOUND) };
+  let Ok(body) = std::fs::read(&file) else { return status(StatusCode::NOT_FOUND) };
+  Response::builder()
+    .status(StatusCode::OK)
+    .header(header::CONTENT_TYPE, mime_of(name).unwrap_or("application/octet-stream"))
+    .header(header::CACHE_CONTROL, "max-age=31536000, immutable")
+    .header("X-Content-Type-Options", "nosniff")
+    .body(body)
+    .unwrap_or_else(|_| status(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
 // ---- media --------------------------------------------------------------------

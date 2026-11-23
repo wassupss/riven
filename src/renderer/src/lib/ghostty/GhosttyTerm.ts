@@ -65,6 +65,12 @@ export interface GhosttyTermOptions {
   cursorStyle: 'block' | 'bar' | 'underline'
   scrollback: number
   theme: GhosttyTheme
+  /**
+   * Leave the default background unpainted (a panel background image shows
+   * through). Cells with an explicit background colour keep it. Changing it
+   * swaps the canvas, since a 2D context's alpha is fixed when it is made.
+   */
+  transparentBg?: boolean
 }
 
 interface Disposable {
@@ -434,7 +440,7 @@ export class GhosttyTerm {
     parent.appendChild(root)
     this.root = root
     this.canvas = canvas
-    this.ctx = canvas.getContext('2d', { alpha: false })
+    this.ctx = this.context2d(canvas)
     this.input = input
     this.compo = compo
 
@@ -860,7 +866,34 @@ export class GhosttyTerm {
       case 'scrollback':
         this.applyScrollback()
         break
+      case 'transparentBg':
+        this.swapCanvas()
+        break
     }
+  }
+
+  // Opaque unless the background is see-through: an opaque canvas lets the
+  // compositor skip blending it.
+  private context2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+    return canvas.getContext('2d', { alpha: !!this.opts.transparentBg })
+  }
+
+  // A fresh canvas with the other alpha mode in place of the old one, then
+  // one full repaint. Only runs when the setting flips.
+  private swapCanvas(): void {
+    const root = this.root
+    const old = this.canvas
+    if (!root || !old) return
+    const canvas = document.createElement('canvas')
+    canvas.className = old.className
+    this.unbindCanvas?.()
+    root.replaceChild(canvas, old)
+    this.canvas = canvas
+    this.ctx = this.context2d(canvas)
+    this.bindCanvas(canvas)
+    root.style.background = this.opts.transparentBg ? 'transparent' : this.defBg
+    this.sizeCanvas()
+    this.invalidate()
   }
 
   // Per-terminal callbacks: set on construction and again on the terminal a
@@ -1074,7 +1107,7 @@ export class GhosttyTerm {
       for (let i = 0; i < 256; i++)
         this.palette.push(css(this.paletteRgb[i * 3], this.paletteRgb[i * 3 + 1], this.paletteRgb[i * 3 + 2]))
       this.full = true
-      if (this.root) this.root.style.background = this.defBg
+      if (this.root) this.root.style.background = this.opts.transparentBg ? 'transparent' : this.defBg
     }
 
     // scrollbar position: a change repaints everything (the thumb overlays cells)
@@ -1125,8 +1158,12 @@ export class GhosttyTerm {
     x.ghostty_render_state_get(this.rs, RS_DATA.DIRTY, dp)
     const full = this.full || vt.dv().getInt32(dp, true) === DIRTY.FULL
     if (full) {
-      ctx.fillStyle = this.defBg
-      ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+      if (this.opts.transparentBg) {
+        ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+      } else {
+        ctx.fillStyle = this.defBg
+        ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+      }
     }
 
     // rows
@@ -1190,8 +1227,12 @@ export class GhosttyTerm {
     ctx.beginPath()
     ctx.rect(0, top, this.canvas ? this.canvas.width / this.dpr : n * cw, ch)
     ctx.clip()
-    ctx.fillStyle = this.defBg
-    ctx.fillRect(0, top, (this.canvas?.width ?? 0) / this.dpr, ch)
+    if (this.opts.transparentBg) {
+      ctx.clearRect(0, top, (this.canvas?.width ?? 0) / this.dpr, ch)
+    } else {
+      ctx.fillStyle = this.defBg
+      ctx.fillRect(0, top, (this.canvas?.width ?? 0) / this.dpr, ch)
+    }
 
     // pass 1: resolve styles + backgrounds
     const styles: Array<CellStyle | null> = new Array(n)
@@ -2073,22 +2114,33 @@ export class GhosttyTerm {
   private bindMouse(): void {
     const canvas = this.canvas
     if (!canvas) return
-    const onDown = (e: MouseEvent): void => this.onMouseDown(e)
     const onMove = (e: MouseEvent): void => this.onMouseMove(e)
     const onUp = (e: MouseEvent): void => this.onMouseUp(e)
+    this.bindCanvas(canvas)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    this.cleanup.push(() => {
+      this.unbindCanvas?.()
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    })
+  }
+
+  // The canvas's own listeners, apart so swapCanvas can move them over.
+  private unbindCanvas: (() => void) | null = null
+  private bindCanvas(canvas: HTMLCanvasElement): void {
+    const onDown = (e: MouseEvent): void => this.onMouseDown(e)
+    const onMove = (e: MouseEvent): void => this.onMouseMove(e)
     const onWheel = (e: WheelEvent): void => this.onWheel(e)
     canvas.addEventListener('mousedown', onDown)
     canvas.addEventListener('mousemove', onMove)
     canvas.addEventListener('wheel', onWheel, { passive: false })
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    this.cleanup.push(() => {
+    this.unbindCanvas = () => {
       canvas.removeEventListener('mousedown', onDown)
       canvas.removeEventListener('mousemove', onMove)
       canvas.removeEventListener('wheel', onWheel)
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    })
+      this.unbindCanvas = null
+    }
   }
 
   private local(e: MouseEvent): { x: number; y: number } {

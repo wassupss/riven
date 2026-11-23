@@ -1,6 +1,6 @@
 import type { CliUpdateState } from '../../../preload/index'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { addTerminal } from '../dock/registry'
 import { useUI, type SettingsTab } from '../state/ui'
@@ -19,6 +19,8 @@ import PetSpeciesSettings from './PetSpeciesSettings'
 import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
+import { backgroundUrl, importBackground } from '../lib/panelBackground'
+import { MAX_BLUR, MIN_OPACITY, PANEL_BG_KINDS, type PanelBgKind } from '../state/panelBackground'
 import {
   SlidersHorizontal,
   Bot,
@@ -127,6 +129,116 @@ function ToggleRow({
     <Row title={title} desc={desc}>
       <Switch checked={checked} onChange={onChange} disabled={disabled} />
     </Row>
+  )
+}
+
+// The panel background image: pick (a copy goes to userData/backgrounds),
+// remove, where it shows, how strong and how blurred. The rest of the rows
+// only appear once there is an image to tune.
+const BG_KIND_LABEL: Record<PanelBgKind, string> = {
+  terminal: 'settings.bg.kindTerminal',
+  editor: 'settings.bg.kindEditor',
+  chat: 'settings.bg.kindChat'
+}
+const BG_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp'
+
+function PanelBackgroundSettings(): JSX.Element {
+  const t = useT()
+  const s = useSettings((st) => st.settings)
+  const set = useSettings((st) => st.set)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const image = s.panelBgImage
+
+  const pick = async (file: File | undefined): Promise<void> => {
+    if (!file) return
+    setBusy(true)
+    setError('')
+    try {
+      set({ panelBgImage: await importBackground(file) })
+    } catch (e) {
+      setError(t('settings.bg.failed', { msg: e instanceof Error ? e.message : String(e) }))
+    } finally {
+      setBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const remove = (): void => {
+    setError('')
+    set({ panelBgImage: '' })
+    void window.api.background.remove().catch(() => {})
+  }
+
+  return (
+    <>
+      <div className="section-label">{t('settings.bg.section')}</div>
+      <Row title={t('settings.bg.image')} desc={error || t('settings.bg.imageDesc')}>
+        {image && <span className="pbg-thumb" style={{ backgroundImage: `url("${backgroundUrl(image)}")` }} />}
+        <input
+          ref={fileRef}
+          type="file"
+          accept={BG_ACCEPT}
+          hidden
+          onChange={(e) => void pick(e.target.files?.[0])}
+        />
+        <Button disabled={busy} onClick={() => fileRef.current?.click()}>
+          {busy ? <Loader2 size={12} className="spin" /> : null}
+          {image ? t('settings.bg.change') : t('settings.bg.choose')}
+        </Button>
+        {image && <Button onClick={remove}>{t('settings.bg.remove')}</Button>}
+      </Row>
+      {image && (
+        <>
+          <Row title={t('settings.bg.scope')} desc={t('settings.bg.scopeDesc')}>
+            <Segmented
+              value={s.panelBgScope}
+              onChange={(v) => set({ panelBgScope: v })}
+              options={[
+                { value: 'app', label: t('settings.bg.scopeApp') },
+                { value: 'panels', label: t('settings.bg.scopePanels') }
+              ]}
+            />
+          </Row>
+          {s.panelBgScope === 'panels' &&
+            PANEL_BG_KINDS.map((k) => (
+              <ToggleRow
+                key={k}
+                title={t(BG_KIND_LABEL[k])}
+                checked={s.panelBgKinds.includes(k)}
+                onChange={(v) =>
+                  set({
+                    panelBgKinds: PANEL_BG_KINDS.filter((x) => (x === k ? v : s.panelBgKinds.includes(x)))
+                  })
+                }
+              />
+            ))}
+          <Row title={t('settings.bg.opacity')} desc={t('settings.bg.opacityDesc')}>
+            <input
+              type="range"
+              className="pbg-range"
+              min={Math.round(MIN_OPACITY * 100)}
+              max={100}
+              value={Math.round(s.panelBgOpacity * 100)}
+              onChange={(e) => set({ panelBgOpacity: Number(e.target.value) / 100 })}
+            />
+            <span className="pbg-range-val">{Math.round(s.panelBgOpacity * 100)}%</span>
+          </Row>
+          <Row title={t('settings.bg.blur')}>
+            <input
+              type="range"
+              className="pbg-range"
+              min={0}
+              max={MAX_BLUR}
+              value={s.panelBgBlur}
+              onChange={(e) => set({ panelBgBlur: Number(e.target.value) })}
+            />
+            <span className="pbg-range-val">{s.panelBgBlur}px</span>
+          </Row>
+        </>
+      )}
+    </>
   )
 }
 
@@ -366,6 +478,8 @@ export default function SettingsModal(): JSX.Element | null {
                     </button>
                   ))}
                 </div>
+
+                <PanelBackgroundSettings />
 
                 <div className="section-label">{t('settings.usageSection')}</div>
                 <ToggleRow
