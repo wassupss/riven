@@ -19,7 +19,7 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'config:save': ['name', 'data'],
   'config:reveal': ['name'],
   'background:import': ['dataUrl'],
-  'background:remove': [],
+  'background:gc': ['keep'],
   // sessions
   'sessions:load': [],
   'sessions:save': ['data'],

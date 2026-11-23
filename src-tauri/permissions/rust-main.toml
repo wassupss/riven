@@ -71,7 +71,7 @@ permissions = [
   "allow-config-save",
   "allow-config-reveal",
   "allow-background-import",
-  "allow-background-remove",
+  "allow-background-gc",
   "allow-db-list",
   "allow-db-save",
   "allow-db-delete",
@@ -597,9 +597,9 @@ description = "Allows background_import."
 commands.allow = ["background_import"]
 
 [[permission]]
-identifier = "allow-background-remove"
-description = "Allows background_remove."
-commands.allow = ["background_remove"]
+identifier = "allow-background-gc"
+description = "Allows background_gc."
+commands.allow = ["background_gc"]
 
 [[permission]]
 identifier = "allow-db-list"

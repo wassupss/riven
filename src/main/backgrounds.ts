@@ -3,14 +3,20 @@ import { app, ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 
-// The panel background image (Settings > appearance). src-tauri/src/services/
-// backgrounds.rs is the Tauri build's twin; keep the two in step.
+// Panel background images (Settings > general, tab menu). src-tauri/src/
+// services/backgrounds.rs is the Tauri build's twin; keep the two in step.
 //
 // The page hands over the picked file's bytes as a data URL; they are copied to
 // userData/backgrounds/bg-<16 hex of sha256>.<ext>, so the original can move or
 // go away. The type comes from the bytes (magic numbers), never from the name
 // or the data URL's label, and only raster formats are accepted: no SVG, which
-// can carry script. One image is kept: importing a new one removes the others.
+// can carry script.
+//
+// Several images can be in use (a default per panel kind, an override per
+// panel), and only the page knows which: it sends the full list of names its
+// settings and every saved pane still use (background:gc) after an image is
+// picked, replaced or removed, and at startup. Files of our name shape that
+// are not in that list are deleted; nothing else in the folder is touched.
 //
 // media.ts serves it as riven-media://bg/<name>, and only a name of exactly
 // that shape, read from that folder.
@@ -61,15 +67,28 @@ export function backgroundFile(name: string): string | null {
   return isBackgroundName(name) ? path.join(backgroundsDir(), name) : null
 }
 
-async function prune(keep: string | null): Promise<void> {
+/**
+ * The stored files to delete: our own names (bg-<hash>.<ext>) that are not in
+ * use. Anything else in the folder (a half-written .tmp of an import in
+ * flight, a stray file) is left alone.
+ */
+export function unusedBackgrounds(files: readonly string[], keep: readonly string[]): string[] {
+  const used = new Set(keep)
+  return files.filter((n) => isBackgroundName(n) && !used.has(n))
+}
+
+/** Delete the stored backgrounds not in `keep`; resolves to the names removed. */
+export async function collectBackgrounds(keep: readonly string[]): Promise<string[]> {
   const dir = backgroundsDir()
   let names: string[] = []
   try {
     names = await fs.readdir(dir)
   } catch {
-    return
+    return []
   }
-  for (const n of names) if (n !== keep) await fs.rm(path.join(dir, n), { force: true }).catch(() => {})
+  const gone = unusedBackgrounds(names, keep)
+  for (const n of gone) await fs.rm(path.join(dir, n), { force: true }).catch(() => {})
+  return gone
 }
 
 export function registerBackgroundHandlers(): void {
@@ -91,8 +110,12 @@ export function registerBackgroundHandlers(): void {
       await fs.writeFile(tmp, bytes)
       await fs.rename(tmp, file)
     }
-    await prune(name)
     return name
   })
-  ipcMain.handle('background:remove', () => prune(null))
+  ipcMain.handle('background:gc', async (_e, keep: unknown): Promise<number> => {
+    // A list that is not a list of strings is a bug on the page: refuse it
+    // rather than read it as "nothing is in use" and delete everything.
+    if (!Array.isArray(keep) || !keep.every((k) => typeof k === 'string')) throw new Error('bad keep list')
+    return (await collectBackgrounds(keep)).length
+  })
 }

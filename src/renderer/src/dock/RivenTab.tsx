@@ -12,6 +12,8 @@ import { Check, Smartphone, X } from 'lucide-react'
 import { setTermShared } from '../state/remoteTerms'
 import '../styles/remote-terms.css'
 import { hostFor, type Host } from '../lib/hostWindow'
+import { isBgKind } from '../state/panelBackground'
+import PanelBgDialog from './PanelBgDialog'
 
 // Custom dockview tab: double-click the title to rename the panel. The name is
 // persisted with the layout (dockview serializes the title). Chat panes also show
@@ -27,6 +29,10 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   const [editing, setEditing] = useState(false)
   const [avatarRev, setAvatarRev] = useState(0) // bump to re-read the override
   const [menu, setMenu] = useState<{ x: number; y: number; host: Host } | null>(null)
+  // The panel background dialog, opened from the menu in the tab's own window.
+  const [bgHost, setBgHost] = useState<Host | null>(null)
+  // The panel's kind (Workbench's component name); the launcher has no background.
+  const kind = containerApi.getPanel(api.id)?.view.contentComponent
   const isChat = api.id.startsWith('chat-')
   const isTerm = api.id.startsWith('term-')
   // A terminal the user chose to show on paired phones (state/remoteTerms).
@@ -218,10 +224,34 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
               >
                 {t('tab.colorNone')}
               </div>
+              {isBgKind(kind) && (
+                <>
+                  <div className="context-sep" />
+                  <div
+                    className="context-item"
+                    onClick={() => {
+                      setBgHost(menu.host)
+                      setMenu(null)
+                    }}
+                  >
+                    {t('tab.background')}
+                  </div>
+                </>
+              )}
             </div>
           </div>,
           menu.host.doc.body
         )}
+      {bgHost && isBgKind(kind) && (
+        <PanelBgDialog
+          workspace={workspace}
+          panelId={api.id}
+          kind={kind}
+          title={title}
+          host={bgHost}
+          onClose={() => setBgHost(null)}
+        />
+      )}
     </div>
   )
 }

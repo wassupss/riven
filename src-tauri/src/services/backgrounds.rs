@@ -1,11 +1,17 @@
-// The panel background image (Settings > appearance), src/main/backgrounds.ts
-// in the Electron build.
+// Panel background images (Settings > general, tab menu), src/main/
+// backgrounds.ts in the Electron build.
 //
 // The page hands over the picked file's bytes as a data URL; they are copied to
 // userData/backgrounds/bg-<16 hex of sha256>.<ext>, so the original can move or
 // go away. The type comes from the bytes (magic numbers), never from the name
 // or the data URL's label, and only raster formats are accepted: no SVG, which
-// can carry script. One image is kept: importing a new one removes the others.
+// can carry script.
+//
+// Several images can be in use (a default per panel kind, an override per
+// panel), and only the page knows which: it sends the full list of names its
+// settings and every saved pane still use (background_gc) after an image is
+// picked, replaced or removed, and at startup. Files of our name shape that
+// are not in that list are deleted; nothing else in the folder is touched.
 //
 // page.rs serves it at /__riven/bg/<name>, and only a name of exactly that
 // shape, read from that folder: no path, no "..", nothing else under userData.
@@ -69,7 +75,8 @@ pub fn decode_data_url(data_url: &str) -> Result<Vec<u8>, String> {
   base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| e.to_string())
 }
 
-/// Copy the image in and return its name; every other background is removed.
+/// Copy the image in and return its name. Others stay: removing what is no
+/// longer used is `collect`'s job, with the page's list of names in use.
 pub fn import(data_url: &str) -> Result<String, String> {
   let bytes = decode_data_url(data_url)?;
   if bytes.len() > MAX_BYTES {
@@ -85,22 +92,26 @@ pub fn import(data_url: &str) -> Result<String, String> {
     std::fs::write(&tmp, &bytes).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
   }
-  prune(Some(&name));
   Ok(name)
 }
 
-/// Remove every file in the folder except `keep`.
-pub fn prune(keep: Option<&str>) {
-  let Ok(rd) = std::fs::read_dir(dir()) else { return };
-  for e in rd.flatten() {
-    let n = e.file_name();
-    if Some(n.to_string_lossy().as_ref()) == keep {
-      continue;
-    }
-    if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
-      let _ = std::fs::remove_file(e.path());
-    }
-  }
+/// The stored files to delete: our own names (bg-<hash>.<ext>) that are not in
+/// use. Anything else in the folder (a half-written .tmp of an import in
+/// flight, a stray file) is left alone.
+pub fn unused<'a>(files: &'a [String], keep: &[String]) -> Vec<&'a str> {
+  files.iter().map(String::as_str).filter(|n| valid_name(n) && !keep.iter().any(|k| k == n)).collect()
+}
+
+/// Delete the stored backgrounds not in `keep`; returns how many went.
+pub fn collect(keep: &[String]) -> usize {
+  let d = dir();
+  let Ok(rd) = std::fs::read_dir(&d) else { return 0 };
+  let files: Vec<String> = rd
+    .flatten()
+    .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+    .map(|e| e.file_name().to_string_lossy().into_owned())
+    .collect();
+  unused(&files, keep).into_iter().filter(|n| std::fs::remove_file(d.join(n)).is_ok()).count()
 }
 
 /// The file behind a served name, None for any other name.
@@ -143,6 +154,22 @@ mod tests {
       assert!(file_for(bad).is_none());
     }
     assert!(file_for("bg-0123456789abcdef.jpg").unwrap().ends_with("backgrounds/bg-0123456789abcdef.jpg"));
+  }
+
+  #[test]
+  fn collects_only_unused_own_names() {
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let files = s(&[
+      "bg-0123456789abcdef.png",
+      "bg-1111111111111111.jpg",
+      "bg-2222222222222222.webp",
+      "bg-2222222222222222.webp.tmp",
+      "notes.txt",
+    ]);
+    let keep = s(&["bg-1111111111111111.jpg", "bg-9999999999999999.png"]);
+    assert_eq!(unused(&files, &keep), vec!["bg-0123456789abcdef.png", "bg-2222222222222222.webp"]);
+    // Everything in use: nothing goes.
+    assert!(unused(&files, &s(&["bg-0123456789abcdef.png", "bg-1111111111111111.jpg", "bg-2222222222222222.webp"])).is_empty());
   }
 
   #[test]

@@ -1,68 +1,27 @@
-import { useSettings, getSettings } from '../state/settings'
-import { panelBgView, type PanelBgView } from '../state/panelBackground'
-import '../styles/panel-background.css'
+import { getSettings } from '../state/settings'
+import { useSession } from '../state/session'
+import { referencedBackgrounds } from '../state/panelBackground'
 
-// Applies the panel background setting to the page: attributes and custom
-// properties on <html>, read by styles/panel-background.css. The layers are
-// static CSS, so nothing here runs per frame and no panel re-renders: the
-// only JS work is this, once per change of the setting. (The terminal canvas
-// and Monaco's theme follow the same setting on their own: TerminalPane and
-// editor/highlight.)
+// Panel background images, the page side: where a stored image is loaded
+// from, importing a picked file, and removing stored files nothing uses any
+// more. Drawing is dock/PanelBgHost (per panel CSS variables, static CSS in
+// styles/panel-background.css).
 
 /** The URL the page loads a stored background from. */
 export function backgroundUrl(name: string): string {
-  // The Tauri build serves it on the page's own origin (page.rs).
+  const enc = encodeURIComponent(name)
+  // The Tauri build serves it on the page's own origin (page.rs). Made
+  // absolute so a popped-out panel's window resolves it the same way.
   const tauri = typeof window !== 'undefined' ? (window as { __RIVEN_BG__?: string }).__RIVEN_BG__ : undefined
-  if (tauri) return tauri.replace('{}', encodeURIComponent(name))
-  return `riven-media://bg/${encodeURIComponent(name)}`
-}
-
-const PROPS = [
-  '--pbg-image',
-  '--pbg-tint',
-  '--pbg-filter',
-  '--pbg-size',
-  '--pbg-pos',
-  '--pbg-repeat',
-  '--pbg-origin'
-]
-
-function apply(v: PanelBgView): void {
-  const root = document.documentElement
-  if (!v.image) {
-    root.removeAttribute('data-pbg')
-    root.removeAttribute('data-pbg-app')
-    for (const p of PROPS) root.style.removeProperty(p)
-    return
+  if (tauri) {
+    const path = tauri.replace('{}', enc)
+    try {
+      return new URL(path, window.location.href).href
+    } catch {
+      return path
+    }
   }
-  root.style.setProperty('--pbg-image', `url("${backgroundUrl(v.image)}")`)
-  root.style.setProperty('--pbg-tint', String(v.tint))
-  root.style.setProperty('--pbg-filter', v.filter)
-  root.style.setProperty('--pbg-size', v.size)
-  root.style.setProperty('--pbg-pos', v.pos)
-  root.style.setProperty('--pbg-repeat', v.repeat)
-  root.style.setProperty('--pbg-origin', v.origin)
-  if (v.app) root.setAttribute('data-pbg-app', '')
-  else root.removeAttribute('data-pbg-app')
-  if (v.kinds.length) root.setAttribute('data-pbg', v.kinds.join(' '))
-  else root.removeAttribute('data-pbg')
-}
-
-const key = (v: PanelBgView): string =>
-  `${v.image}|${v.app}|${v.kinds.join(',')}|${v.tint}|${v.filter}|${v.size}|${v.pos}|${v.repeat}|${v.origin}`
-
-/** Start following the setting. Returns the unsubscribe. */
-export function startPanelBackground(): () => void {
-  let last = ''
-  const sync = (): void => {
-    const v = panelBgView(getSettings())
-    const k = key(v)
-    if (k === last) return
-    last = k
-    apply(v)
-  }
-  sync()
-  return useSettings.subscribe(sync)
+  return `riven-media://bg/${enc}`
 }
 
 /** Read a picked file and store a copy of it; resolves to the stored name. */
@@ -76,4 +35,33 @@ export function importBackground(file: File): Promise<string> {
     }
     r.readAsDataURL(file)
   })
+}
+
+/** Every stored background the settings or any workspace's saved panes still name. */
+export function backgroundsInUse(): string[] {
+  return referencedBackgrounds(getSettings().panelBgs, useSession.getState().sessions)
+}
+
+/**
+ * Remove stored backgrounds nothing names. Main deletes only files of its own
+ * name shape that are not in the list, so a file still referenced is never
+ * touched; a file dropped here but still named on disk (a crash before the
+ * debounced save) just shows no image.
+ */
+export function collectBackgrounds(): void {
+  void window.api.background.gc(backgroundsInUse()).catch(() => {})
+}
+
+let gcTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * After an image was picked, replaced or removed: collect once things settle,
+ * after settings and sessions had time to save, so the disk never names a
+ * file that is already gone.
+ */
+export function scheduleBackgroundGc(): void {
+  if (gcTimer) clearTimeout(gcTimer)
+  gcTimer = setTimeout(() => {
+    gcTimer = null
+    collectBackgrounds()
+  }, 2000)
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { PANEL_BG_DEFAULTS, sanitizePanelBg, samePanelBg, type PanelBgSettings } from './panelBackground'
+import { migrateLegacyBg, sameKindBgs, sanitizeKindBgs, type PanelBgKinds } from './panelBackground'
 
 /** A phone the user approved for remote control (state/remote). */
 export interface RemoteDevice {
@@ -32,9 +32,10 @@ export interface RemoteTermAudit {
   error?: string
 }
 
-// The panel background image fields (panelBg*) live in PanelBgSettings: see
-// state/panelBackground.ts. All of them default to "no image".
-export interface Settings extends PanelBgSettings {
+export interface Settings {
+  // The default background of each panel kind that has one (state/
+  // panelBackground.ts). A panel's own override lives in its pane state.
+  panelBgs: PanelBgKinds
   theme: string
   editorKeymap: string
   editorFontFamily: string
@@ -224,7 +225,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
   terminalCursor: '#ff7847',
-  ...PANEL_BG_DEFAULTS
+  panelBgs: {}
 }
 
 interface SettingsState {
@@ -280,10 +281,13 @@ export function migrateLegacy(s: Settings): Settings {
     for (const k of REMOVED_SETTINGS) delete out[k]
     s = out as unknown as Settings
   }
-  // A hand-edited or half-written background setting falls back to "off"
-  // rather than reaching the CSS as something unexpected.
-  const bg = sanitizePanelBg(s)
-  if (!samePanelBg(bg, s)) s = { ...s, ...bg }
+  // The first version's single background (panelBg*) becomes kind defaults.
+  s = migrateLegacyBg(s as unknown as Record<string, unknown>) as unknown as Settings
+  // A hand-edited or half-written background falls back to "none" rather than
+  // reaching the CSS as something unexpected.
+  const bgs = sanitizeKindBgs(s.panelBgs)
+  if (!s.panelBgs || !sameKindBgs(bgs, s.panelBgs) || Object.keys(bgs).length !== Object.keys(s.panelBgs).length)
+    s = { ...s, panelBgs: bgs }
   return s
 }
 
@@ -351,7 +355,9 @@ if (typeof window !== 'undefined')
     }
   })
 
-export async function loadSettings(): Promise<void> {
+/** Resolves to whether a settings.json was there and read (false: defaults). */
+export async function loadSettings(): Promise<boolean> {
   const saved = (await window.api.config.load('settings.json')) as Partial<Settings> | null
   useSettings.getState().hydrate(saved ?? {})
+  return saved !== null && typeof saved === 'object'
 }

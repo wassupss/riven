@@ -1333,11 +1333,13 @@ const api = {
       ipcRenderer.sendSync('config:save-sync', name, data) === true,
     reveal: (name: string): Promise<void> => ipcRenderer.invoke('config:reveal', name)
   },
-  // The panel background image, copied into userData/backgrounds (main/
-  // backgrounds.ts). import resolves to the stored file's name.
+  // Panel background images, copied into userData/backgrounds (main/
+  // backgrounds.ts). import resolves to the stored file's name; gc deletes
+  // every stored image not in `keep` (the names still in use) and resolves to
+  // how many went.
   background: {
     import: (dataUrl: string): Promise<string> => ipcRenderer.invoke('background:import', dataUrl),
-    remove: (): Promise<void> => ipcRenderer.invoke('background:remove')
+    gc: (keep: string[]): Promise<number> => ipcRenderer.invoke('background:gc', keep)
   },
   // The renderer's own data as files, userData/store/<name>.json (see
   // main/store and renderer lib/fileStore). Saving null removes the file.

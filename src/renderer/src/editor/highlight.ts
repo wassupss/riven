@@ -1,8 +1,7 @@
 import * as monaco from 'monaco-editor'
 import type { HighlighterCore, LanguageInput, ThemeInput } from 'shiki/core'
 import { onShikiTheme } from '../state/themes'
-import { useSettings, getSettings } from '../state/settings'
-import { bgActiveFor } from '../state/panelBackground'
+import { onSeeThroughChange, seeThroughActive } from '../lib/editorSeeThrough'
 
 // Monaco's built-in tokenizer doesn't understand JSX and mis-colors it. We swap
 // in Shiki (the same TextMate grammars + themes VSCode uses) so .tsx/.jsx and
@@ -177,12 +176,16 @@ export function setShikiTheme(name: string): void {
 }
 
 // ---- see-through editor (panel background image) ----------------------------
-// styles/panel-background.css clears the editor's CSS background; the minimap
-// and gutter paint from the theme, so the current theme is redefined (same name,
-// same token rules) with transparent backgrounds while an image is showing,
-// and back to Shiki's own colors when it is not. Only runs when that flips or
-// the theme changes.
-let transparent = bgActiveFor(getSettings(), 'editor')
+// Monaco themes are global (defineTheme/setTheme, and a per-instance `theme`
+// option too, restyle every editor), so one editor cannot get its own. The
+// text area, gutter and margins are cleared per panel in CSS (styles/panel-
+// background.css, only inside a panel that has a background). The minimap is
+// a canvas painted from the theme, so the current theme is redefined (same
+// name, same token rules) with transparent backgrounds while at least one such
+// panel is mounted (lib/editorSeeThrough), and back to Shiki's own colors when
+// none is. Every other editor keeps the solid --bg styles.css forces on it, so
+// it looks the same either way. Only runs when that flips or the theme changes.
+let transparent = seeThroughActive()
 let themeSource: ((name: string) => monaco.editor.IStandaloneThemeData) | null = null
 
 const CLEAR = '#00000000'
@@ -206,8 +209,7 @@ function defineCurrent(): void {
   if (base) monaco.editor.defineTheme(currentTheme, transparent ? clearBackgrounds(base) : base)
 }
 
-useSettings.subscribe((st) => {
-  const want = bgActiveFor(st.settings, 'editor')
+onSeeThroughChange((want) => {
   if (want === transparent) return
   transparent = want
   if (!shikiReady) return

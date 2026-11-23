@@ -1,60 +1,109 @@
-// Panel background image: the pure half (settings shape, validation and what
-// the page should show). No DOM and no window here, so it runs in plain-node
-// unit tests; lib/panelBackground.ts applies the result to the page.
+// Panel background images: the pure half (shapes, validation, resolution,
+// legacy migration and which stored files are still in use). No DOM and no
+// window here, so it runs in plain-node unit tests; lib/panelBackground.ts and
+// dock/PanelBgHost.tsx apply the result to the page.
 //
-// The image itself is a copy in userData/backgrounds/ (main/backgrounds.ts and
+// Two levels, resolved per panel:
+//   1. a default per panel kind, in settings (Settings.panelBgs)
+//   2. an override per panel, in that pane's state in sessions.json
+//      (PaneState.bg): a background of its own, or 'none'
+// The panel's own override wins, then its kind's default, then nothing.
+//
+// Each image is a copy in userData/backgrounds/ (main/backgrounds.ts and
 // src-tauri services/backgrounds.rs), named by a hash of its bytes, so the
-// original can move or be deleted. Settings keep only that file name.
-
-/** Panel kinds whose own background can be made see-through. */
-export const PANEL_BG_KINDS = ['terminal', 'editor', 'chat'] as const
-export type PanelBgKind = (typeof PANEL_BG_KINDS)[number]
-
-/** 'app': one image behind the whole dock. 'panels': an image in each chosen panel kind. */
-export type PanelBgScope = 'app' | 'panels'
+// original can move or be deleted. Settings and panes keep only that file name;
+// files nothing refers to any more are removed (referencedBackgrounds + the
+// main process's background:gc).
 
 /**
- * How the image is sized in its area (the whole dock, or each panel):
- * 'cover' fills it (cropping), 'contain' shows all of it, 'size' is a width
- * picked as a share of the area's width, 'tile' repeats it at that width.
- * The aspect ratio is always kept.
+ * The dock's panel kinds (Workbench's components) that can have a background.
+ * The launcher is left out: it is a one-off picker that replaces itself.
+ */
+export const PANEL_BG_KINDS = [
+  'terminal',
+  'editor',
+  'chat',
+  'preview',
+  'notes',
+  'db',
+  'api',
+  'git',
+  'changes',
+  'search',
+  'explorer',
+  'agentgroup',
+  'scheduler',
+  'prdiff'
+] as const
+export type PanelBgKind = (typeof PANEL_BG_KINDS)[number]
+
+export function isBgKind(v: unknown): v is PanelBgKind {
+  return typeof v === 'string' && (PANEL_BG_KINDS as readonly string[]).includes(v)
+}
+
+/** The i18n key naming each kind (the panel titles riven already uses). */
+export const PANEL_BG_KIND_LABEL: Record<PanelBgKind, string> = {
+  terminal: 'title.terminal',
+  editor: 'title.editor',
+  chat: 'title.chat',
+  preview: 'title.preview',
+  notes: 'title.notes',
+  db: 'title.db',
+  api: 'title.api',
+  git: 'title.git',
+  changes: 'title.changes',
+  search: 'title.search',
+  explorer: 'title.explorer',
+  agentgroup: 'title.agentgroup',
+  scheduler: 'title.scheduler',
+  prdiff: 'title.prdiff'
+}
+
+/**
+ * How the image is sized in its panel: 'cover' fills it (cropping), 'contain'
+ * shows all of it, 'size' is a width picked as a share of the panel's width,
+ * 'tile' repeats it at that width. The aspect ratio is always kept.
  */
 export const PANEL_BG_FITS = ['cover', 'contain', 'size', 'tile'] as const
 export type PanelBgFit = (typeof PANEL_BG_FITS)[number]
 
-export interface PanelBgSettings {
-  /** File name in userData/backgrounds, '' = no background (the default). */
-  panelBgImage: string
-  /** How strongly the image shows through the theme tint, 0.05..1. */
-  panelBgOpacity: number
+/** One background: an image and how it is drawn. */
+export interface PanelBg {
+  /** File name in userData/backgrounds (always a valid name once stored). */
+  image: string
+  /** How strongly the image shows through the theme tint, MIN_OPACITY..1. */
+  opacity: number
   /** Blur radius in CSS px, 0..MAX_BLUR. */
-  panelBgBlur: number
-  panelBgScope: PanelBgScope
-  /** The panel kinds that show it when the scope is 'panels'. */
-  panelBgKinds: PanelBgKind[]
-  panelBgFit: PanelBgFit
-  /** Image (or tile) width as % of the area's width, MIN_SIZE..MAX_SIZE; 'size' and 'tile' only. */
-  panelBgSize: number
+  blur: number
+  fit: PanelBgFit
+  /** Image (or tile) width as % of the panel's width, MIN_SIZE..MAX_SIZE; 'size' and 'tile' only. */
+  size: number
   /**
    * Position, 0..100 on each axis, read like CSS background-position %: that
-   * point of the image sits on the same point of the area (0 0 = top left
+   * point of the image sits on the same point of the panel (0 0 = top left
    * corners together, 50 50 = centred). Relative, so it follows panel size.
    */
-  panelBgX: number
-  panelBgY: number
+  x: number
+  y: number
 }
 
-export const PANEL_BG_DEFAULTS: PanelBgSettings = {
-  panelBgImage: '',
-  panelBgOpacity: 0.3,
-  panelBgBlur: 0,
-  panelBgScope: 'app',
-  panelBgKinds: ['terminal', 'editor', 'chat'],
-  // Cover, centred: exactly what the first version always drew.
-  panelBgFit: 'cover',
-  panelBgSize: 40,
-  panelBgX: 50,
-  panelBgY: 50
+/** Settings.panelBgs: the default background of each kind that has one. */
+export type PanelBgKinds = Partial<Record<PanelBgKind, PanelBg>>
+
+/**
+ * PaneState.bg: absent = use the kind's default, 'none' = no background in
+ * this panel even when its kind has one, an object = this panel's own.
+ */
+export type PaneBg = PanelBg | 'none'
+
+/** What a new background starts as before the image is picked. Cover, centred. */
+export const PANEL_BG_LOOK: Omit<PanelBg, 'image'> = {
+  opacity: 0.3,
+  blur: 0,
+  fit: 'cover',
+  size: 40,
+  x: 50,
+  y: 50
 }
 
 export const MIN_OPACITY = 0.05
@@ -78,94 +127,132 @@ export const round1 = (v: number): number => Math.round(v * 10) / 10
 const clamp = (v: unknown, lo: number, hi: number, dflt: number): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt
 
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
 /**
- * Any saved (or synced, or hand-edited) values -> a valid set. Unknown or
- * broken values fall back to the defaults, which means "off".
+ * Any saved (or hand-edited) value -> a valid background, or null when it has
+ * no usable image. Broken numbers fall back to the defaults or are clamped.
  */
-export function sanitizePanelBg(s: Partial<Record<keyof PanelBgSettings, unknown>>): PanelBgSettings {
-  const kinds = Array.isArray(s.panelBgKinds)
-    ? PANEL_BG_KINDS.filter((k) => (s.panelBgKinds as unknown[]).includes(k))
-    : PANEL_BG_DEFAULTS.panelBgKinds
+export function sanitizeBg(v: unknown): PanelBg | null {
+  if (!isObj(v) || !isBgName(v.image)) return null
+  const d = PANEL_BG_LOOK
   return {
-    panelBgImage: isBgName(s.panelBgImage) ? s.panelBgImage : '',
-    panelBgOpacity: clamp(s.panelBgOpacity, MIN_OPACITY, 1, PANEL_BG_DEFAULTS.panelBgOpacity),
-    panelBgBlur: Math.round(clamp(s.panelBgBlur, 0, MAX_BLUR, PANEL_BG_DEFAULTS.panelBgBlur)),
-    panelBgScope: s.panelBgScope === 'panels' ? 'panels' : 'app',
-    panelBgKinds: kinds,
-    panelBgFit: (PANEL_BG_FITS as readonly unknown[]).includes(s.panelBgFit)
-      ? (s.panelBgFit as PanelBgFit)
-      : PANEL_BG_DEFAULTS.panelBgFit,
-    panelBgSize: round1(clamp(s.panelBgSize, MIN_SIZE, MAX_SIZE, PANEL_BG_DEFAULTS.panelBgSize)),
-    panelBgX: round1(clamp(s.panelBgX, 0, 100, PANEL_BG_DEFAULTS.panelBgX)),
-    panelBgY: round1(clamp(s.panelBgY, 0, 100, PANEL_BG_DEFAULTS.panelBgY))
+    image: v.image,
+    opacity: clamp(v.opacity, MIN_OPACITY, 1, d.opacity),
+    blur: Math.round(clamp(v.blur, 0, MAX_BLUR, d.blur)),
+    fit: (PANEL_BG_FITS as readonly unknown[]).includes(v.fit) ? (v.fit as PanelBgFit) : d.fit,
+    size: round1(clamp(v.size, MIN_SIZE, MAX_SIZE, d.size)),
+    x: round1(clamp(v.x, 0, 100, d.x)),
+    y: round1(clamp(v.y, 0, 100, d.y))
   }
 }
 
-export function samePanelBg(a: PanelBgSettings, b: PanelBgSettings): boolean {
+/** Settings.panelBgs as saved -> only known kinds with a usable background. */
+export function sanitizeKindBgs(v: unknown): PanelBgKinds {
+  const out: PanelBgKinds = {}
+  if (!isObj(v)) return out
+  for (const k of PANEL_BG_KINDS) {
+    const bg = sanitizeBg(v[k])
+    if (bg) out[k] = bg
+  }
+  return out
+}
+
+/** PaneState.bg as saved -> a valid value, undefined (= kind default) for anything else. */
+export function sanitizePaneBg(v: unknown): PaneBg | undefined {
+  if (v === 'none') return 'none'
+  return sanitizeBg(v) ?? undefined
+}
+
+export function sameBg(a: PanelBg | null | undefined, b: PanelBg | null | undefined): boolean {
+  if (!a || !b) return !a && !b
   return (
-    a.panelBgImage === b.panelBgImage &&
-    a.panelBgOpacity === b.panelBgOpacity &&
-    a.panelBgBlur === b.panelBgBlur &&
-    a.panelBgScope === b.panelBgScope &&
-    a.panelBgFit === b.panelBgFit &&
-    a.panelBgSize === b.panelBgSize &&
-    a.panelBgX === b.panelBgX &&
-    a.panelBgY === b.panelBgY &&
-    Array.isArray(a.panelBgKinds) &&
-    Array.isArray(b.panelBgKinds) &&
-    a.panelBgKinds.length === b.panelBgKinds.length &&
-    a.panelBgKinds.every((k, i) => b.panelBgKinds[i] === k)
+    a.image === b.image &&
+    a.opacity === b.opacity &&
+    a.blur === b.blur &&
+    a.fit === b.fit &&
+    a.size === b.size &&
+    a.x === b.x &&
+    a.y === b.y
   )
 }
 
-/**
- * Does a panel of this kind see through to an image? In 'app' scope every
- * supported kind does (the image sits behind the dock); in 'panels' scope only
- * the chosen kinds (each draws its own copy).
- */
-export function bgActiveFor(s: PanelBgSettings, kind: string): boolean {
-  if (!isBgName(s.panelBgImage)) return false
-  if (!(PANEL_BG_KINDS as readonly string[]).includes(kind)) return false
-  return s.panelBgScope === 'app' || s.panelBgKinds.includes(kind as PanelBgKind)
+export function sameKindBgs(a: PanelBgKinds, b: PanelBgKinds): boolean {
+  return PANEL_BG_KINDS.every((k) => sameBg(a[k], b[k]))
 }
 
-/** What lib/panelBackground puts on <html>: attributes + CSS custom properties. */
-export interface PanelBgView {
-  /** null: no image anywhere, every attribute and property is removed. */
-  image: string | null
-  /** data-pbg-app: one layer behind the whole dock. */
-  app: boolean
-  /** data-pbg: the kinds that draw their own layer (space separated in the DOM). */
-  kinds: PanelBgKind[]
+/** The kinds map with one kind's default replaced (null removes it). */
+export function withKindBg(kinds: PanelBgKinds, kind: PanelBgKind, bg: PanelBg | null): PanelBgKinds {
+  const next = { ...kinds }
+  if (bg) next[kind] = bg
+  else delete next[kind]
+  return next
+}
+
+/**
+ * The background a panel shows: its own override, else its kind's default,
+ * else none. Everything is sanitized on the way, so a broken value in either
+ * place means "none" rather than something unexpected in the CSS.
+ */
+export function resolveBg(kinds: PanelBgKinds | undefined, kind: string, pane: unknown): PanelBg | null {
+  const own = sanitizePaneBg(pane)
+  if (own === 'none') return null
+  if (own) return own
+  if (!isBgKind(kind)) return null
+  return sanitizeBg(kinds?.[kind])
+}
+
+/** The CSS custom properties PanelBgHost puts on a panel's .pbg-host. */
+export interface PanelBgVars {
+  /** --pbg-image: url() of the stored copy. */
+  '--pbg-image': string
   /** --pbg-tint: opacity of the theme-coloured tint over the image. */
-  tint: number
+  '--pbg-tint': string
   /** --pbg-filter: 'none' or 'blur(Npx)'. */
-  filter: string
+  '--pbg-filter': string
   /** --pbg-size: background-size ('cover', 'contain' or '<n>% auto'). */
-  size: string
+  '--pbg-size': string
   /** --pbg-pos: background-position ('<x>% <y>%'). */
-  pos: string
+  '--pbg-pos': string
   /** --pbg-repeat: background-repeat. */
-  repeat: 'no-repeat' | 'repeat'
+  '--pbg-repeat': string
   /**
    * --pbg-origin: background-origin. The image layer is overscanned by the
    * blur margin; 'cover' keeps sizing against that larger box (the first
    * version's look), the rest size and place against the visible area itself
    * (content-box), so 0% really is the panel's edge.
    */
-  origin: 'border-box' | 'content-box'
+  '--pbg-origin': string
 }
 
 /** The CSS background-size/position/repeat/origin for a placement. */
-export function placementCss(
-  s: Pick<PanelBgSettings, 'panelBgFit' | 'panelBgSize' | 'panelBgX' | 'panelBgY'>
-): Pick<PanelBgView, 'size' | 'pos' | 'repeat' | 'origin'> {
-  const fit = s.panelBgFit
+export function placementCss(s: Pick<PanelBg, 'fit' | 'size' | 'x' | 'y'>): {
+  size: string
+  pos: string
+  repeat: 'no-repeat' | 'repeat'
+  origin: 'border-box' | 'content-box'
+} {
+  const fit = s.fit
   return {
-    size: fit === 'cover' || fit === 'contain' ? fit : `${s.panelBgSize}% auto`,
-    pos: `${s.panelBgX}% ${s.panelBgY}%`,
+    size: fit === 'cover' || fit === 'contain' ? fit : `${s.size}% auto`,
+    pos: `${s.x}% ${s.y}%`,
     repeat: fit === 'tile' ? 'repeat' : 'no-repeat',
     origin: fit === 'cover' ? 'border-box' : 'content-box'
+  }
+}
+
+/** A background -> its CSS variables; `url` turns the stored name into a page URL. */
+export function bgVars(bg: PanelBg, url: (name: string) => string): PanelBgVars {
+  const p = placementCss(bg)
+  return {
+    '--pbg-image': `url("${url(bg.image)}")`,
+    // Rounded so the property string is stable (no re-style for 0.30000000004).
+    '--pbg-tint': String(Math.round((1 - bg.opacity) * 100) / 100),
+    '--pbg-filter': bg.blur > 0 ? `blur(${bg.blur}px)` : 'none',
+    '--pbg-size': p.size,
+    '--pbg-pos': p.pos,
+    '--pbg-repeat': p.repeat,
+    '--pbg-origin': p.origin
   }
 }
 
@@ -211,17 +298,90 @@ export function clampPos(v: number): number {
   return round1(Math.min(100, Math.max(0, v)))
 }
 
-export function panelBgView(s: PanelBgSettings): PanelBgView {
-  const c = sanitizePanelBg(s)
-  if (!c.panelBgImage || (c.panelBgScope === 'panels' && !c.panelBgKinds.length))
-    return { image: null, app: false, kinds: [], tint: 1, filter: 'none', ...placementCss(PANEL_BG_DEFAULTS) }
-  return {
-    ...placementCss(c),
-    image: c.panelBgImage,
-    app: c.panelBgScope === 'app',
-    kinds: c.panelBgScope === 'panels' ? c.panelBgKinds : [],
-    // Rounded so the property string is stable (no re-style for 0.30000000004).
-    tint: Math.round((1 - c.panelBgOpacity) * 100) / 100,
-    filter: c.panelBgBlur > 0 ? `blur(${c.panelBgBlur}px)` : 'none'
+// ---- the first version's single, app-wide setting ---------------------------
+
+/** settings.json keys of the single background (2b37940, a863c2c). Dropped on load. */
+export const LEGACY_BG_KEYS = [
+  'panelBgImage',
+  'panelBgOpacity',
+  'panelBgBlur',
+  'panelBgScope',
+  'panelBgKinds',
+  'panelBgFit',
+  'panelBgSize',
+  'panelBgX',
+  'panelBgY'
+] as const
+
+/**
+ * The kinds that showed the single image. 'app' scope drew it behind the
+ * whole dock with these kinds made see-through (every other panel kept its own
+ * background and covered it); 'panels' scope drew it in the chosen ones.
+ */
+const LEGACY_KINDS: readonly PanelBgKind[] = ['terminal', 'editor', 'chat']
+
+/**
+ * Settings as loaded (or pulled from the cloud) -> the same with the old
+ * single background turned into kind defaults and its keys removed.
+ *
+ * Only a valid stored image converts, into each kind that showed it and has no
+ * default of its own yet (so running it twice, or on a cloud row an older
+ * build wrote, never overwrites a newer choice). The look carries over as it
+ * was: fit, size, position, opacity, blur. Returns the input object itself when
+ * there is nothing to do.
+ */
+export function migrateLegacyBg<T extends Record<string, unknown>>(s: T): T {
+  if (!LEGACY_BG_KEYS.some((k) => k in s)) return s
+  const out: Record<string, unknown> = { ...s }
+  for (const k of LEGACY_BG_KEYS) delete out[k]
+  const bg = sanitizeBg({
+    image: s.panelBgImage,
+    opacity: s.panelBgOpacity,
+    blur: s.panelBgBlur,
+    fit: s.panelBgFit,
+    size: s.panelBgSize,
+    x: s.panelBgX,
+    y: s.panelBgY
+  })
+  if (bg) {
+    // The old default scope was 'app'; anything but 'panels' read as it.
+    const kinds =
+      s.panelBgScope === 'panels'
+        ? Array.isArray(s.panelBgKinds)
+          ? LEGACY_KINDS.filter((k) => (s.panelBgKinds as unknown[]).includes(k))
+          : LEGACY_KINDS
+        : LEGACY_KINDS
+    const map = sanitizeKindBgs(s.panelBgs)
+    for (const k of kinds) if (!map[k]) map[k] = { ...bg }
+    out.panelBgs = map
   }
+  return out as T
+}
+
+// ---- which stored files are in use ------------------------------------------
+
+/** The slice of a saved session the reference scan reads (state/session's Session). */
+export interface BgSessionLike {
+  /** Pane id -> pane state; only its `bg` is read. */
+  panes?: Record<string, unknown>
+}
+
+/**
+ * Every stored background some setting or saved pane still names: the kind
+ * defaults and the override of every pane in every workspace's session (the
+ * ones on screen and the ones only in a saved layout alike). Anything not in
+ * here may be deleted, so this reads the raw values and keeps any valid file
+ * name it finds, even in an entry that is otherwise broken.
+ */
+export function referencedBackgrounds(kinds: unknown, sessions: Record<string, BgSessionLike | null | undefined>): string[] {
+  const names = new Set<string>()
+  const take = (v: unknown): void => {
+    if (isObj(v) && isBgName(v.image)) names.add(v.image)
+  }
+  if (isObj(kinds)) for (const v of Object.values(kinds)) take(v)
+  for (const s of Object.values(sessions ?? {})) {
+    if (!isObj(s) || !isObj(s.panes)) continue
+    for (const p of Object.values(s.panes)) if (isObj(p)) take(p.bg)
+  }
+  return [...names].sort()
 }

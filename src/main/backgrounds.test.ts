@@ -12,7 +12,7 @@ vi.mock('electron', () => ({
   }
 }))
 
-const { registerBackgroundHandlers, sniffImage, isBackgroundName, backgroundFile, decodeDataUrl, backgroundsDir } =
+const { registerBackgroundHandlers, sniffImage, isBackgroundName, backgroundFile, decodeDataUrl, backgroundsDir, unusedBackgrounds } =
   await import('./backgrounds')
 registerBackgroundHandlers()
 const call = (ch: string, ...a: unknown[]): Promise<unknown> => Promise.resolve(handlers.get(ch)!({}, ...a))
@@ -49,7 +49,22 @@ describe('background images', () => {
     expect(decodeDataUrl('data:image/png,hi')).toBeNull()
   })
 
-  it('copies an import into userData/backgrounds and keeps only the latest', async () => {
+  it('picks only unused files of its own name shape to delete', () => {
+    const files = [
+      'bg-0123456789abcdef.png',
+      'bg-1111111111111111.jpg',
+      'bg-2222222222222222.webp',
+      'bg-2222222222222222.webp.tmp',
+      'notes.txt'
+    ]
+    expect(unusedBackgrounds(files, ['bg-1111111111111111.jpg', 'bg-9999999999999999.png'])).toEqual([
+      'bg-0123456789abcdef.png',
+      'bg-2222222222222222.webp'
+    ])
+    expect(unusedBackgrounds(files, ['bg-0123456789abcdef.png', 'bg-1111111111111111.jpg', 'bg-2222222222222222.webp'])).toEqual([])
+  })
+
+  it('keeps every import until a collection leaves it out', async () => {
     const a = (await call('background:import', dataUrl(PNG))) as string
     expect(isBackgroundName(a)).toBe(true)
     expect(a.endsWith('.png')).toBe(true)
@@ -58,9 +73,18 @@ describe('background images', () => {
     // The label on the data URL is not trusted: these bytes are a JPEG.
     const b = (await call('background:import', dataUrl(JPG, 'image/png'))) as string
     expect(b.endsWith('.jpg')).toBe(true)
+    // Several images can be in use at once: importing removes nothing.
+    expect(readdirSync(backgroundsDir()).sort()).toEqual([a, b].sort())
+    // A file in the keep list stays, the rest goes.
+    expect(await call('background:gc', [b])).toBe(1)
     expect(readdirSync(backgroundsDir())).toEqual([b])
-    await call('background:remove')
-    expect(existsSync(join(backgroundsDir(), b))).toBe(false)
+    expect(existsSync(join(backgroundsDir(), a))).toBe(false)
+    // A broken list is refused, never read as "nothing in use".
+    await expect(call('background:gc', null)).rejects.toThrow()
+    await expect(call('background:gc', [3])).rejects.toThrow()
+    expect(readdirSync(backgroundsDir())).toEqual([b])
+    expect(await call('background:gc', [])).toBe(1)
+    expect(readdirSync(backgroundsDir())).toEqual([])
   })
 
   it('refuses what is not an image', async () => {

@@ -1,8 +1,10 @@
-/* Panel background image (Settings > appearance; lib/panelBackground.ts).
+/* Panel background images (state/panelBackground.ts, dock/PanelBgHost.tsx).
 
-   lib/panelBackground puts the setting on <html>:
-     data-pbg-app        one image behind the whole dock (.app-bg in Workbench)
-     data-pbg="kind ..." the panel kinds that draw their own copy (.pbg)
+   Every dock panel is wrapped in a .pbg-host (display: contents, so the dock's
+   layout is untouched) with a .pbg layer first. A panel whose resolved
+   background (its own, else its kind's default) is an image gets, on that
+   host only:
+     data-pbg            turns the layer on and the panel see-through
      --pbg-image         url() of the stored copy
      --pbg-tint          opacity of the theme-coloured tint over the image
      --pbg-filter        none | blur(Npx)
@@ -10,38 +12,40 @@
      --pbg-pos           background-position: <x>% <y>%
      --pbg-repeat        no-repeat | repeat (tile)
      --pbg-origin        border-box (cover) | content-box (the rest)
+   Custom properties inherit through a display: contents element, so the
+   layer and the panel below it read them as usual.
 
    Every layer is a static element painted once: no animation, no per-frame
    work. The tint is the theme's own --bg, so text keeps the contrast the theme
    was built for, and it follows a theme switch with no JS.
 
-   Workbench wraps each panel in .pbg-host[data-kind] (display: contents, so the
-   dock's layout is untouched) with a .pbg layer first. The layer sits at
-   z-index -1 of the panel's render overlay (dockview gives it isolation:
-   isolate), so it paints just above the overlay and below everything the panel
-   draws, positioned or not. */
+   The layer sits at z-index -1 of the panel's render overlay (dockview gives
+   it isolation: isolate), so it paints just above the overlay and below
+   everything the panel draws, positioned or not. */
 
 .pbg-host {
   display: contents;
 }
-.pbg,
-.app-bg {
+.pbg {
   display: none;
   position: absolute;
   inset: 0;
+  z-index: -1;
   overflow: hidden;
   pointer-events: none;
   background: var(--bg);
 }
-.pbg::before,
-.app-bg::before {
+.pbg-host[data-pbg] > .pbg {
+  display: block;
+}
+.pbg::before {
   content: '';
   position: absolute;
   /* Blur pulls the transparent outside in at the edges; overscan hides it.
      The padding brings the content box back to the visible area, so with
      origin content-box the size % and position % are the panel's own (0% is
-     its edge), while cover sizes against the overscanned box as before. The
-     painting area stays the whole box, so tiles reach under the overscan. */
+     its edge), while cover sizes against the overscanned box. The painting
+     area stays the whole box, so tiles reach under the overscan. */
   inset: -48px;
   padding: 48px;
   background-image: var(--pbg-image);
@@ -52,8 +56,7 @@
   background-clip: border-box;
   filter: var(--pbg-filter, none);
 }
-.pbg::after,
-.app-bg::after {
+.pbg::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -61,59 +64,88 @@
   opacity: var(--pbg-tint, 1);
 }
 
-/* ---- per panel kind ------------------------------------------------------ */
-:root[data-pbg~='terminal'] .pbg-host[data-kind='terminal'] > .pbg,
-:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] > .pbg,
-:root[data-pbg~='chat'] .pbg-host[data-kind='chat'] > .pbg {
-  display: block;
-}
-.pbg {
-  z-index: -1;
-}
-
-/* ---- the whole dock ------------------------------------------------------ */
-:root[data-pbg-app] .workbench-wrap > .app-bg {
-  display: block;
-}
-:root[data-pbg-app] .workbench {
-  position: relative;
-  --dv-group-view-background-color: transparent;
-  --dv-background-color: transparent;
-}
-
 /* ---- see-through panel roots ---------------------------------------------
-   Only the kinds that show an image; panels of other kinds keep their own
-   background (in app scope they sit on the image like cards). */
-:root[data-pbg~='terminal'] .pbg-host[data-kind='terminal'] .terminal-panel,
-:root[data-pbg-app] .pbg-host[data-kind='terminal'] .terminal-panel,
-:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .editor-panel,
-:root[data-pbg-app] .pbg-host[data-kind='editor'] .editor-panel,
-:root[data-pbg~='chat'] .pbg-host[data-kind='chat'] .chat-panel,
-:root[data-pbg-app] .pbg-host[data-kind='chat'] .chat-panel {
+   The panel's own root (the host's other child) and the known panel root
+   classes lose their solid fill; inner surfaces a panel draws on purpose
+   (cards, lists, toolbars) keep theirs and sit on the image. */
+.pbg-host[data-pbg] > :not(.pbg),
+.pbg-host[data-pbg]
+  :is(
+    .terminal-panel,
+    .editor-panel,
+    .chat-panel,
+    .browser-panel,
+    .notes-panel,
+    .dbx-shell,
+    .git-panel,
+    .changes-panel,
+    .search-panel,
+    .explorer-panel,
+    .sched-panel,
+    .pr-diff-panel
+  ) {
   background: transparent;
 }
 
-/* Monaco: styles.css forces its background to --bg with !important; the
-   minimap and gutter follow editor/highlight's see-through theme. */
-:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor,
-:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor .monaco-editor-background,
-:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor .margin,
-:root[data-pbg~='editor'] .pbg-host[data-kind='editor'] .monaco-editor .margin-view-overlays,
-:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor,
-:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor .monaco-editor-background,
-:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor .margin,
-:root[data-pbg-app] .pbg-host[data-kind='editor'] .monaco-editor .margin-view-overlays {
+/* Monaco: styles.css forces every editor's background to --bg with
+   !important; inside a panel with a background these selectors are more
+   specific and win. The minimap is canvas, cleared by editor/highlight's
+   see-through theme while such a panel is mounted (lib/editorSeeThrough). */
+.pbg-host[data-pbg] .monaco-editor,
+.pbg-host[data-pbg] .monaco-editor .monaco-editor-background,
+.pbg-host[data-pbg] .monaco-editor .margin,
+.pbg-host[data-pbg] .monaco-editor .margin-view-overlays {
   background-color: transparent !important;
 }
 
-/* Settings row: the picked image's thumbnail. */
+/* ---- the editor (components/PanelBgEditor) ------------------------------- */
+/* The image's thumbnail (its url is set inline), or the word for none. */
 .pbg-thumb {
   width: 44px;
   height: 28px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--edge);
-  background: var(--pbg-image) center / cover no-repeat;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   flex: none;
+}
+.pbg-none {
+  min-width: 44px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+.pbg-error {
+  padding: 4px 0 6px;
+  color: var(--danger, var(--fg-dim));
+  font-size: var(--text-xs);
+}
+.pbg-editor {
+  display: flex;
+  flex-direction: column;
+}
+/* Settings: one row per kind; the open one's editor sits indented below it. */
+.pbg-section-desc {
+  padding: 0 0 4px;
+}
+.pbg-kind.open > .pbg-editor {
+  padding-left: 12px;
+  border-left: 2px solid var(--hairline);
+  margin-bottom: 6px;
+}
+/* Tab menu dialog. */
+.pbg-modal {
+  width: 480px;
+}
+.pbg-modal-body {
+  padding: 4px 16px 10px;
+}
+.pbg-modal-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pbg-range {
   width: 140px;
@@ -138,6 +170,7 @@
   max-width: 40vw;
   border-radius: var(--radius-sm);
   border: 1px solid var(--edge);
+  aspect-ratio: 1.6;
   background-color: var(--bg);
   cursor: grab;
   touch-action: none;

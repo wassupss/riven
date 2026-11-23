@@ -151,7 +151,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     config::config_save,
     config::config_reveal,
     config::background_import,
-    config::background_remove,
+    config::background_gc,
     sessions::sessions_load,
     sessions::sessions_save,
     store::store_load_all,

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { evictWorkspace } from './agentEdits'
+import type { PanelBg } from './panelBackground'
 
 // The editor model store registers here (avoids a session ↔ modelStore import
 // cycle) so closeWorkspace can dispose models that were open only in the closed
@@ -38,6 +39,10 @@ export interface PaneState {
   // A terminal the user chose to show on paired phones (state/remoteTerms). Off
   // unless turned on from the tab's menu; a phone cannot set it.
   remoteShare?: boolean
+  // This panel's background (state/panelBackground PaneBg): absent = its
+  // kind's default, 'none', or its own. Saved here so it survives restarts and
+  // goes wherever the panel goes, a popped-out window included.
+  bg?: PanelBg | 'none'
 }
 
 export interface Session {
@@ -522,7 +527,9 @@ useSession.subscribe((st) => {
   void window.api.workspace.setRoots(roots)
 })
 
-export async function loadPersistedSessions(): Promise<void> {
+/** Resolves to whether a sessions file was there and read (false: a fresh start). */
+export async function loadPersistedSessions(): Promise<boolean> {
   const data = (await window.api.sessions.load()) as PersistShape | null
   useSession.getState().hydrate(data ?? { openWorkspaces: [], activeWorkspace: null, sessions: {} })
+  return data !== null && typeof data === 'object'
 }
