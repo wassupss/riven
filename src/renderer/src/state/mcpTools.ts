@@ -136,7 +136,9 @@ function resolveCtx(caller: Caller): Ctx {
   // user has customised (colouring a terminal tab puts term-N in it), so a
   // "is it in panes" test alone let ask_user queue against a terminal, where
   // nothing renders it and the call simply blocked until it timed out.
-  const chatPane = pane && pane.startsWith('chat-') ? pane : null
+  // (A CLI chat is a chat pane: chat-<id>, or clichat-<id> for the ones
+  // opened from the experimental command.)
+  const chatPane = pane && /^(chat|clichat)-/.test(pane) ? pane : null
   const ws = ((): string | null => {
     // widForPane falls back to the active workspace for an unknown pane; go
     // direct so attribution can fail honestly instead of hitting the screen.

@@ -22,6 +22,8 @@ function readDataUrl(file: File): Promise<string | null> {
 
 export interface ComposerHandle {
   focus: () => void
+  /** Add text to the end of the input without sending (browser "send to chat"). */
+  append: (text: string) => void
 }
 
 const Composer = forwardRef<
@@ -42,7 +44,23 @@ const Composer = forwardRef<
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const attsRef = useRef<Attachment[]>([])
   const composing = useRef(false)
-  useImperativeHandle(ref, () => ({ focus: () => inputRef.current?.focus() }), [])
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => inputRef.current?.focus(),
+      append: (text: string) => {
+        const el = inputRef.current
+        const cur = el?.value ?? ''
+        const next = (cur ? cur.replace(/\s*$/, '') + '\n' : '') + text + ' '
+        setInput(next)
+        if (el) {
+          el.value = next
+          el.focus()
+        }
+      }
+    }),
+    []
+  )
 
   const put = (next: Attachment[]): void => {
     attsRef.current = next

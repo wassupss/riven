@@ -245,7 +245,7 @@ export interface CliAgentHooks {
   /** Send a message the way the composer does. */
   send: (text: string) => void
   attach: (text: string) => void
-  remote: NonNullable<AgentController['remote']>
+  remote?: AgentController['remote']
 }
 
 /**

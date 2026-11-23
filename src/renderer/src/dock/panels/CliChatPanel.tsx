@@ -10,8 +10,11 @@ import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from './clichat
 import Composer, { type ComposerHandle } from './clichat/Composer'
 import Header from './clichat/Header'
 import SessionPicker from './clichat/SessionPicker'
-import { getAgentStatus, setAgentStatus } from '../../state/agents'
+import { getAgentStatus, setAgentStatus, useAgents } from '../../state/agents'
 import { markPaneSeen } from '../../state/roster'
+import { cliLive, registerCliChatAgent } from '../../state/cliChats'
+import { takeInitialText } from '../registry'
+import AskInline from './AskInline'
 import '../../styles/cli-chat.css'
 
 // Experimental CLI chat: the REAL interactive `claude`, run by Rust in a
@@ -23,6 +26,9 @@ import '../../styles/cli-chat.css'
 export interface CliChatParams {
   chatKey: string
   sessionId?: string
+  /** A name given by whoever opened the pane (an agent group member). */
+  pinnedTitle?: string
+  agent?: string
 }
 
 const NO_AGENTS: Record<string, AgentProgress> = {}
@@ -61,7 +67,9 @@ export default function CliChatPanel({
   const remember = useCallback(
     (sessionId: string) => {
       // Remembered so a restart of riven resumes this conversation.
-      setPaneState(workspace, key, { session: sessionId })
+      // `fresh` only meant "do not adopt another conversation" until this
+      // pane had one of its own.
+      setPaneState(workspace, key, { session: sessionId, fresh: undefined })
       if (params.sessionId !== sessionId) api.updateParameters({ ...params, sessionId })
     },
     [workspace, key, api, params]
@@ -82,22 +90,77 @@ export default function CliChatPanel({
       if (e.key === key) dispatch(e as unknown as CliEvent)
     })
     const resume = loadPaneState(workspace, key).session ?? params.sessionId
+    started.current = false
     window.api.cliChat
       .start(key, opts({ resume: resume ?? undefined }))
       .then((r) => {
         setError(null)
         remember(r.sessionId)
+        started.current = true
+        // The message the pane was opened with (addChat), then anything an
+        // agent or a job sent before the session was up. Rust queues them
+        // until the CLI is ready.
+        const first = takeInitialText(key)
+        for (const text of [...(first ? [first] : []), ...pendingSends.current.splice(0)])
+          window.api.cliChat.send(key, text, [])
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
     return off
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, workspace, epoch])
 
-  // The session's name (/rename, else the CLI's own) on the tab, unless the
-  // person named the tab itself (a pinned title, registry.setChatTitle).
+  // The session's name (/rename, else the CLI's own) on the tab. A pinned
+  // name (an agent group member, a tab renamed by hand: registry.setChatTitle)
+  // stays in front of it, as in the chat pane: "member · group · title".
+  const pinned = params.pinnedTitle || pane0.title || ''
   useEffect(() => {
-    if (model.title && !loadPaneState(workspace, key).title) api.setTitle(model.title)
-  }, [model.title, api, workspace, key])
+    const pin = loadPaneState(workspace, key).title || params.pinnedTitle || ''
+    const next = pin && model.title ? `${pin} · ${model.title}` : pin || model.title
+    if (next && api.title !== next) api.setTitle(next)
+    useAgents.getState().bump()
+  }, [model.title, api, workspace, key, params.pinnedTitle])
+
+  // This pane as a delegatable agent (riven_agents, riven_ask_agent(s), agent
+  // groups, pipelines, scheduled jobs, a phone). Busy and the answers come
+  // from state/cliChats, which follows the session even while this panel is
+  // unmounted.
+  const started = useRef(false)
+  const pendingSends = useRef<string[]>([])
+  const sendRef = useRef<(text: string) => void>(() => {})
+  sendRef.current = (text: string): void => {
+    if (!text.trim()) return
+    if (!started.current) {
+      pendingSends.current.push(text)
+      return
+    }
+    // The CLI exited: a message brings it back, resuming the conversation.
+    if (cliLive(key)?.dead) {
+      pendingSends.current.push(text)
+      restart()
+      return
+    }
+    atBottom.current = true
+    window.api.cliChat.send(key, text, [])
+  }
+  const titleRef = useRef(pinned || t('clichat.title'))
+  useEffect(() => {
+    titleRef.current = api.title || pinned || t('clichat.title')
+  })
+  useEffect(
+    () =>
+      registerCliChatAgent({
+        chatKey: key,
+        workspace,
+        getTitle: () => api.title || titleRef.current,
+        setTitle: (title) => {
+          titleRef.current = title
+        },
+        send: (text) => sendRef.current(text),
+        attach: (text) => composerRef.current?.append(text)
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key, workspace]
+  )
 
   // The id moves on a fork, and after a restart that started a new one.
   useEffect(() => {
@@ -240,6 +303,8 @@ export default function CliChatPanel({
             {model.permissions.map((p) => (
               <PermissionCard key={p.id} chatKey={key} p={p} onTerminal={toTerminal} />
             ))}
+            {/* riven's own ask_user tool, asked by this pane's agent. */}
+            <AskInline chatKey={key} />
             {state.parked && <div className="cli-chat-note parked">{t('clichat.parkedNote')}</div>}
             {showNotice && (
               <div className={`cli-chat-note ${lastNotice.level}`}>
