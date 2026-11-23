@@ -1,6 +1,6 @@
 import type { CliUpdateState } from '../../../preload/index'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { addTerminal } from '../dock/registry'
 import { useUI, type SettingsTab } from '../state/ui'
@@ -20,7 +20,21 @@ import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
 import { backgroundUrl, importBackground } from '../lib/panelBackground'
-import { MAX_BLUR, MIN_OPACITY, PANEL_BG_KINDS, type PanelBgKind } from '../state/panelBackground'
+import {
+  MAX_BLUR,
+  MAX_SIZE,
+  MIN_OPACITY,
+  MIN_SIZE,
+  PANEL_BG_ANCHORS,
+  PANEL_BG_KINDS,
+  clampPos,
+  dragDelta,
+  drawnSize,
+  placementCss,
+  round1,
+  type PanelBgFit,
+  type PanelBgKind
+} from '../state/panelBackground'
 import {
   SlidersHorizontal,
   Bot,
@@ -142,6 +156,162 @@ const BG_KIND_LABEL: Record<PanelBgKind, string> = {
 }
 const BG_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp'
 
+// Placement preview: the picked image placed in a panel-shaped box with the
+// current fit, size and position. Drag moves it (position in %, so it scales
+// with any panel), the wheel or a pinch resizes it, double-click centres it,
+// arrow keys nudge it. Store writes are at most one per frame; the panels
+// behind the modal follow through the same CSS variables, no per-frame work
+// outside the drag itself.
+const BG_ANCHOR_LABEL = ['tl', 't', 'tr', 'l', 'c', 'r', 'bl', 'b', 'br'].map((k) => `settings.bg.anchor.${k}`)
+
+function useImageSize(url: string): { w: number; h: number } | null {
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null)
+  useEffect(() => {
+    let live = true
+    const img = new Image()
+    img.onload = () => {
+      if (live) setDims({ w: img.naturalWidth, h: img.naturalHeight })
+    }
+    img.src = url
+    return () => {
+      live = false
+      img.onload = null
+    }
+  }, [url])
+  return dims
+}
+
+function PanelBgPlacement({ url, wholeApp }: { url: string; wholeApp: boolean }): JSX.Element {
+  const t = useT()
+  const s = useSettings((st) => st.settings)
+  const set = useSettings((st) => st.set)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const dims = useImageSize(url)
+  const drag = useRef<{ x: number; y: number; px: number; py: number; w: number; h: number; dw: number; dh: number } | null>(
+    null
+  )
+  const pending = useRef<Partial<Settings> | null>(null)
+  const frame = useRef(0)
+
+  // One store write per frame, however fast the pointer or wheel events come.
+  const queue = (patch: Partial<Settings>): void => {
+    pending.current = { ...pending.current, ...patch }
+    if (frame.current) return
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0
+      const p = pending.current
+      pending.current = null
+      if (p) useSettings.getState().set(p)
+    })
+  }
+  useEffect(() => () => cancelAnimationFrame(frame.current), [])
+
+  // Wheel / pinch resize. A native listener: React's wheel handler is passive
+  // and cannot keep the settings page from scrolling.
+  useEffect(() => {
+    const el = boxRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      const cur = { ...getSettings(), ...pending.current }
+      const sized = cur.panelBgFit === 'size' || cur.panelBgFit === 'tile'
+      // Over a cover/contain image a plain wheel still scrolls the page; a
+      // pinch (ctrlKey) switches to a custom size that starts where it is.
+      if (!sized && !e.ctrlKey) return
+      e.preventDefault()
+      let base = cur.panelBgSize
+      if (!sized) {
+        const r = el.getBoundingClientRect()
+        const d = dims ? drawnSize(cur.panelBgFit, base, r.width, r.height, dims.w, dims.h) : { w: r.width }
+        base = r.width > 0 ? (d.w / r.width) * 100 : base
+      }
+      const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002))
+      const next = round1(Math.min(MAX_SIZE, Math.max(MIN_SIZE, base * k)))
+      queue(sized ? { panelBgSize: next } : { panelBgFit: 'size', panelBgSize: next })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [dims])
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return
+    const r = e.currentTarget.getBoundingClientRect()
+    const d = dims ? drawnSize(s.panelBgFit, s.panelBgSize, r.width, r.height, dims.w, dims.h) : { w: r.width, h: r.height }
+    drag.current = { x: e.clientX, y: e.clientY, px: s.panelBgX, py: s.panelBgY, w: r.width, h: r.height, dw: d.w, dh: d.h }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    const g = drag.current
+    if (!g) return
+    queue({
+      panelBgX: clampPos(g.px + dragDelta(e.clientX - g.x, g.w, g.dw)),
+      panelBgY: clampPos(g.py + dragDelta(e.clientY - g.y, g.h, g.dh))
+    })
+  }
+  const endDrag = (): void => {
+    drag.current = null
+  }
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const step = e.shiftKey ? 10 : 1
+    const d: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step]
+    }
+    const m = d[e.key]
+    if (!m) return
+    e.preventDefault()
+    set({ panelBgX: clampPos(s.panelBgX + m[0]), panelBgY: clampPos(s.panelBgY + m[1]) })
+  }
+  const centre = (): void => set({ panelBgX: 50, panelBgY: 50 })
+
+  const css = placementCss(s)
+  // Shaped like what it stands for: the window in whole-app scope, a typical
+  // panel otherwise.
+  const ratio = wholeApp ? Math.min(2.2, Math.max(1, window.innerWidth / Math.max(1, window.innerHeight))) : 1.6
+
+  return (
+    <div className="pbg-place">
+      <div
+        ref={boxRef}
+        className="pbg-preview"
+        role="group"
+        tabIndex={0}
+        aria-label={t('settings.bg.preview')}
+        title={t('settings.bg.previewHint')}
+        style={{
+          aspectRatio: String(ratio),
+          backgroundImage: `url("${url}")`,
+          backgroundSize: css.size,
+          backgroundPosition: css.pos,
+          backgroundRepeat: css.repeat
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={centre}
+        onKeyDown={onKeyDown}
+      />
+      <div className="pbg-place-side">
+        <div className="pbg-anchors" role="group" aria-label={t('settings.bg.position')}>
+          {PANEL_BG_ANCHORS.map(([x, y], i) => (
+            <button
+              key={i}
+              type="button"
+              className={`pbg-anchor${s.panelBgX === x && s.panelBgY === y ? ' on' : ''}`}
+              aria-label={t(BG_ANCHOR_LABEL[i])}
+              title={t(BG_ANCHOR_LABEL[i])}
+              onClick={() => set({ panelBgX: x, panelBgY: y })}
+            />
+          ))}
+        </div>
+        <Button onClick={centre}>{t('settings.bg.center')}</Button>
+      </div>
+    </div>
+  )
+}
+
 function PanelBackgroundSettings(): JSX.Element {
   const t = useT()
   const s = useSettings((st) => st.settings)
@@ -214,6 +384,34 @@ function PanelBackgroundSettings(): JSX.Element {
                 }
               />
             ))}
+          <Row title={t('settings.bg.fit')}>
+            <Segmented<PanelBgFit>
+              value={s.panelBgFit}
+              onChange={(v) => set({ panelBgFit: v })}
+              options={[
+                { value: 'cover', label: t('settings.bg.fitCover') },
+                { value: 'contain', label: t('settings.bg.fitContain') },
+                { value: 'size', label: t('settings.bg.fitSize') },
+                { value: 'tile', label: t('settings.bg.fitTile') }
+              ]}
+            />
+          </Row>
+          {(s.panelBgFit === 'size' || s.panelBgFit === 'tile') && (
+            <Row title={t('settings.bg.size')}>
+              <input
+                type="range"
+                className="pbg-range"
+                min={MIN_SIZE}
+                max={MAX_SIZE}
+                value={Math.round(s.panelBgSize)}
+                onChange={(e) => set({ panelBgSize: Number(e.target.value) })}
+              />
+              <span className="pbg-range-val">{Math.round(s.panelBgSize)}%</span>
+            </Row>
+          )}
+          <Row title={t('settings.bg.position')} desc={t('settings.bg.positionDesc')}>
+            <PanelBgPlacement url={backgroundUrl(image)} wholeApp={s.panelBgScope === 'app'} />
+          </Row>
           <Row title={t('settings.bg.opacity')} desc={t('settings.bg.opacityDesc')}>
             <input
               type="range"

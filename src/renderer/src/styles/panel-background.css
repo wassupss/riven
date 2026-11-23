@@ -6,6 +6,10 @@
      --pbg-image         url() of the stored copy
      --pbg-tint          opacity of the theme-coloured tint over the image
      --pbg-filter        none | blur(Npx)
+     --pbg-size          background-size: cover | contain | <n>% auto
+     --pbg-pos           background-position: <x>% <y>%
+     --pbg-repeat        no-repeat | repeat (tile)
+     --pbg-origin        border-box (cover) | content-box (the rest)
 
    Every layer is a static element painted once: no animation, no per-frame
    work. The tint is the theme's own --bg, so text keeps the contrast the theme
@@ -33,9 +37,19 @@
 .app-bg::before {
   content: '';
   position: absolute;
-  /* Blur pulls the transparent outside in at the edges; overscan hides it. */
+  /* Blur pulls the transparent outside in at the edges; overscan hides it.
+     The padding brings the content box back to the visible area, so with
+     origin content-box the size % and position % are the panel's own (0% is
+     its edge), while cover sizes against the overscanned box as before. The
+     painting area stays the whole box, so tiles reach under the overscan. */
   inset: -48px;
-  background: var(--pbg-image) center / cover no-repeat;
+  padding: 48px;
+  background-image: var(--pbg-image);
+  background-size: var(--pbg-size, cover);
+  background-position: var(--pbg-pos, center);
+  background-repeat: var(--pbg-repeat, no-repeat);
+  background-origin: var(--pbg-origin, border-box);
+  background-clip: border-box;
   filter: var(--pbg-filter, none);
 }
 .pbg::after,
@@ -111,4 +125,55 @@
   font-variant-numeric: tabular-nums;
   color: var(--fg-dim);
   font-size: var(--text-sm);
+}
+
+/* Settings: placement preview (drag to move, wheel to resize) + 3x3 anchors. */
+.pbg-place {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pbg-preview {
+  width: 200px;
+  max-width: 40vw;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--edge);
+  background-color: var(--bg);
+  cursor: grab;
+  touch-action: none;
+  flex: none;
+}
+.pbg-preview:active {
+  cursor: grabbing;
+}
+.pbg-preview:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.pbg-place-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.pbg-anchors {
+  display: grid;
+  grid-template-columns: repeat(3, 16px);
+  gap: 3px;
+}
+.pbg-anchor {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 3px;
+  border: 1px solid var(--edge);
+  background: transparent;
+  cursor: pointer;
+}
+.pbg-anchor:hover {
+  background: var(--hover);
+}
+.pbg-anchor.on {
+  background: var(--accent);
+  border-color: var(--accent);
 }

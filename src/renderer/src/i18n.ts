@@ -593,6 +593,32 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Lower lays more of the theme colour over it, which keeps text readable'
   },
   'settings.bg.blur': { ko: '흐림', en: 'Blur' },
+  'settings.bg.fit': { ko: '배치', en: 'Layout' },
+  'settings.bg.fitCover': { ko: '채우기', en: 'Fill' },
+  'settings.bg.fitContain': { ko: '맞추기', en: 'Fit' },
+  'settings.bg.fitSize': { ko: '직접 크기', en: 'Custom size' },
+  'settings.bg.fitTile': { ko: '바둑판', en: 'Tile' },
+  'settings.bg.size': { ko: '크기', en: 'Size' },
+  'settings.bg.position': { ko: '위치', en: 'Position' },
+  'settings.bg.positionDesc': {
+    ko: '미리보기를 끌어 옮기고, 스크롤로 크기를 바꿉니다',
+    en: 'Drag the preview to move it, scroll to resize'
+  },
+  'settings.bg.preview': { ko: '배경 위치 미리보기', en: 'Background position preview' },
+  'settings.bg.previewHint': {
+    ko: '끌어서 이동, 스크롤로 크기, 더블클릭하면 가운데로',
+    en: 'Drag to move, scroll to resize, double-click to centre'
+  },
+  'settings.bg.center': { ko: '가운데로', en: 'Centre' },
+  'settings.bg.anchor.tl': { ko: '왼쪽 위', en: 'Top left' },
+  'settings.bg.anchor.t': { ko: '위', en: 'Top' },
+  'settings.bg.anchor.tr': { ko: '오른쪽 위', en: 'Top right' },
+  'settings.bg.anchor.l': { ko: '왼쪽', en: 'Left' },
+  'settings.bg.anchor.c': { ko: '가운데', en: 'Centre' },
+  'settings.bg.anchor.r': { ko: '오른쪽', en: 'Right' },
+  'settings.bg.anchor.bl': { ko: '왼쪽 아래', en: 'Bottom left' },
+  'settings.bg.anchor.b': { ko: '아래', en: 'Bottom' },
+  'settings.bg.anchor.br': { ko: '오른쪽 아래', en: 'Bottom right' },
   'settings.languageDesc': { ko: '인터페이스 언어', en: 'Interface language' },
   'settings.uiScale': { ko: 'UI 배율', en: 'UI scale' },
   'settings.uiScaleDesc': { ko: '전체 인터페이스 확대/축소 (⌘+ / ⌘- / ⌘0)', en: 'Zoom the whole interface (⌘+ / ⌘- / ⌘0)' },

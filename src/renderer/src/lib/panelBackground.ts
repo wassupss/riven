@@ -17,24 +17,39 @@ export function backgroundUrl(name: string): string {
   return `riven-media://bg/${encodeURIComponent(name)}`
 }
 
+const PROPS = [
+  '--pbg-image',
+  '--pbg-tint',
+  '--pbg-filter',
+  '--pbg-size',
+  '--pbg-pos',
+  '--pbg-repeat',
+  '--pbg-origin'
+]
+
 function apply(v: PanelBgView): void {
   const root = document.documentElement
   if (!v.image) {
     root.removeAttribute('data-pbg')
     root.removeAttribute('data-pbg-app')
-    for (const p of ['--pbg-image', '--pbg-tint', '--pbg-filter']) root.style.removeProperty(p)
+    for (const p of PROPS) root.style.removeProperty(p)
     return
   }
   root.style.setProperty('--pbg-image', `url("${backgroundUrl(v.image)}")`)
   root.style.setProperty('--pbg-tint', String(v.tint))
   root.style.setProperty('--pbg-filter', v.filter)
+  root.style.setProperty('--pbg-size', v.size)
+  root.style.setProperty('--pbg-pos', v.pos)
+  root.style.setProperty('--pbg-repeat', v.repeat)
+  root.style.setProperty('--pbg-origin', v.origin)
   if (v.app) root.setAttribute('data-pbg-app', '')
   else root.removeAttribute('data-pbg-app')
   if (v.kinds.length) root.setAttribute('data-pbg', v.kinds.join(' '))
   else root.removeAttribute('data-pbg')
 }
 
-const key = (v: PanelBgView): string => `${v.image}|${v.app}|${v.kinds.join(',')}|${v.tint}|${v.filter}`
+const key = (v: PanelBgView): string =>
+  `${v.image}|${v.app}|${v.kinds.join(',')}|${v.tint}|${v.filter}|${v.size}|${v.pos}|${v.repeat}|${v.origin}`
 
 /** Start following the setting. Returns the unsubscribe. */
 export function startPanelBackground(): () => void {
