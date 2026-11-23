@@ -61,6 +61,29 @@ export interface CustomDesign {
   face: { x: number; y: number }
   /** Keep the photo as it is: no eyes or mouth are stamped on it. */
   noFace: boolean
+  /**
+   * The faithful picture ("사진 충실 모드"), on species made since it came in:
+   * the photo itself at 32x32 in up to 16 colours, drawn one dot per css
+   * pixel with no face of its own. The 12x12 design above is still made and
+   * kept beside it: the egg's coat, the battle family and build read it, and
+   * an older riven that knows nothing of `photo` draws that instead.
+   */
+  photo?: PhotoArt
+}
+
+/** The faithful picture's grid: the 32 dots a pet is drawn at. */
+export const PHOTO = 32
+export const PHOTO_MAX_COLORS = 16
+/** A dot of the picture: '.' is air, otherwise the index of its colour in `palette`. */
+export const PHOTO_CHARS = '0123456789abcdef'
+/** A picture with fewer dots than this is a speck. */
+export const MIN_PHOTO_CELLS = 60
+
+export interface PhotoArt {
+  /** Up to 16 '#rrggbb' colours. */
+  palette: string[]
+  /** PHOTO rows of PHOTO characters: '.' or a PHOTO_CHARS index into `palette`. */
+  rows: string[]
 }
 
 export type CustomSpeciesId = `u-${string}`
@@ -82,6 +105,29 @@ export function newCustomId(now: number, rand: number = Math.random()): CustomSp
 }
 
 const HEX_RE = /^#[0-9a-f]{6}$/
+
+/** A faithful picture read defensively. Null when unusable (the design then falls back to its 12x12). */
+export function sanitizePhoto(raw: unknown): PhotoArt | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  if (!Array.isArray(o.palette) || !o.palette.length || o.palette.length > PHOTO_MAX_COLORS) return null
+  const palette: string[] = []
+  for (const c of o.palette) {
+    const v = typeof c === 'string' ? c.toLowerCase() : ''
+    if (!HEX_RE.test(v)) return null
+    palette.push(v)
+  }
+  if (!Array.isArray(o.rows) || o.rows.length !== PHOTO) return null
+  const ok = '.' + PHOTO_CHARS.slice(0, palette.length)
+  const rows: string[] = []
+  for (const row of o.rows) {
+    if (typeof row !== 'string' || row.length !== PHOTO) return null
+    for (const ch of row) if (!ok.includes(ch)) return null
+    rows.push(row)
+  }
+  if (cellsOf(rows) < MIN_PHOTO_CELLS) return null
+  return { palette, rows }
+}
 
 /** A design read defensively: a hand-edited file or a forged code must never draw garbage. Null when unusable. */
 export function sanitizeDesign(raw: unknown): CustomDesign | null {
@@ -109,7 +155,9 @@ export function sanitizeDesign(raw: unknown): CustomDesign | null {
   const int = (v: unknown, hi: number): number =>
     typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(hi, Math.round(v))) : 0
   const face = { x: int(f?.x, ART - 6), y: int(f?.y, ART - 4) }
-  return { name, colors, art, face, noFace: o.noFace === true }
+  // A broken picture is dropped, not the species: it still has its 12x12.
+  const photo = o.photo === undefined ? null : sanitizePhoto(o.photo)
+  return { name, colors, art, face, noFace: photo ? true : o.noFace === true, ...(photo ? { photo } : {}) }
 }
 
 export function sanitizeSpecies(raw: unknown): CustomSpecies | null {
@@ -128,7 +176,8 @@ export function designOf(s: CustomDesign): CustomDesign {
     colors: { ...s.colors },
     art: [...s.art],
     face: { ...s.face },
-    noFace: s.noFace
+    noFace: s.noFace,
+    ...(s.photo ? { photo: { palette: [...s.photo.palette], rows: [...s.photo.rows] } } : {})
   }
 }
 
@@ -139,18 +188,35 @@ export const sameDesign = (a: CustomDesign, b: CustomDesign): boolean =>
 
 // ---- the battle code's copy ----
 
-/** A design as a short array, for a battle code: [name, colours, rows joined by '/', fx, fy, noFace]. */
+/**
+ * A design as a short array, for a battle code: [name, colours, rows joined
+ * by '/', fx, fy, noFace], and for a faithful picture a seventh, [its colours
+ * as one hex string, its rows as one string]. A riven from before pictures
+ * reads the first six and draws the 12x12.
+ */
 export function packDesign(d: CustomDesign): unknown[] {
-  return [d.name, COLOR_KEYS.map((k) => d.colors[k].slice(1)).join(''), d.art.join('/'), d.face.x, d.face.y, d.noFace ? 1 : 0]
+  const base = [d.name, COLOR_KEYS.map((k) => d.colors[k].slice(1)).join(''), d.art.join('/'), d.face.x, d.face.y, d.noFace ? 1 : 0]
+  return d.photo ? [...base, [d.photo.palette.map((c) => c.slice(1)).join(''), d.photo.rows.join('')]] : base
+}
+
+function unpackPhoto(raw: unknown): PhotoArt | undefined {
+  if (!Array.isArray(raw) || raw.length < 2) return undefined
+  const [hex, dots] = raw
+  if (typeof hex !== 'string' || hex.length % 6 !== 0 || typeof dots !== 'string' || dots.length !== PHOTO * PHOTO)
+    return undefined
+  const palette = Array.from({ length: hex.length / 6 }, (_, i) => `#${hex.slice(i * 6, i * 6 + 6)}`)
+  const rows = Array.from({ length: PHOTO }, (_, y) => dots.slice(y * PHOTO, (y + 1) * PHOTO))
+  return sanitizePhoto({ palette, rows }) ?? undefined
 }
 
 export function unpackDesign(raw: unknown): CustomDesign | null {
   if (!Array.isArray(raw) || raw.length < 6) return null
-  const [name, hex, rows, fx, fy, nf] = raw
+  const [name, hex, rows, fx, fy, nf, pic] = raw
   if (typeof hex !== 'string' || hex.length !== 30 || typeof rows !== 'string') return null
   const colors = {} as Record<string, string>
   COLOR_KEYS.forEach((k, i) => (colors[k] = `#${hex.slice(i * 6, i * 6 + 6)}`))
-  return sanitizeDesign({ name, colors, art: rows.split('/'), face: { x: fx, y: fy }, noFace: nf === 1 })
+  const photo = unpackPhoto(pic)
+  return sanitizeDesign({ name, colors, art: rows.split('/'), face: { x: fx, y: fy }, noFace: nf === 1, ...(photo ? { photo } : {}) })
 }
 
 // ---- colour arithmetic, shared with the photo pipeline ----
@@ -158,6 +224,22 @@ export function unpackDesign(raw: unknown): CustomDesign | null {
 export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16)
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+
+/** CIE Lab of an sRGB colour, for distances that match what an eye sees. */
+export function labOf(r: number, g: number, b: number): [number, number, number] {
+  const lin = (v: number): number => {
+    const c = v / 255
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }
+  const R = lin(r)
+  const G = lin(g)
+  const B = lin(b)
+  const f = (t: number): number => (t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116)
+  const X = f((R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047)
+  const Y = f(R * 0.2126 + G * 0.7152 + B * 0.0722)
+  const Z = f((R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883)
+  return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)]
 }
 
 export function rgbToHex([r, g, b]: [number, number, number] | number[]): string {

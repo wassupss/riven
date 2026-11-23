@@ -1,7 +1,7 @@
 import { BRANCH_BY_ID, slotOf } from '../state/pet'
 import type { Accessory, AccessorySlot, BranchId, BuiltinSpecies, Form, Mood, Species, Stage } from '../state/pet'
-import { customOf, isCustomId } from '../state/petSpecies'
-import { customBodies, customCoat } from './petCustomArt'
+import { customOf, isCustomId, type CustomDesign } from '../state/petSpecies'
+import { customBodies, customCoat, photoGrid } from './petCustomArt'
 
 // ---------------------------------------------------------------------------
 // The pixel art. Every creature is authored as a 16×16 grid of characters, one
@@ -18,6 +18,7 @@ import { customBodies, customCoat } from './petCustomArt'
 //   .  empty        o  outline        b  body         s  shade (limbs)
 //   h  highlight    w  shell/white    e  eye          m  mouth      a  accent
 //   p  prop (droppings, the medicine cross, the game's arrows)
+//   A..P  the colours of a species' faithful picture (see photoPixels)
 // ---------------------------------------------------------------------------
 
 /** The authored grids: 16×16, one character per dot, easy to read as text. */
@@ -1906,6 +1907,11 @@ export function pixelsOf(
   species: Species = 'cat',
   branch?: BranchId | null
 ): Dot[] {
+  // A faithful picture is drawn as it is (see photoPixels).
+  if (stage !== 'egg' && isCustomId(species)) {
+    const d = customOf(species)
+    if (d?.photo) return photoPixels(d, stage, form, branch)
+  }
   const sprite = bodyOf(species, stage)
   const grid = sprite.rows.map((r) => r.split(''))
 
@@ -2018,6 +2024,73 @@ export function pixelsOf(
     })
   )
   return dots
+}
+
+/**
+ * A species' faithful picture (CustomDesign.photo) as lit dots: the stage's
+ * picture already at the drawn size (petCustomArt photoGrid, cached), with no
+ * face; its mood shows in how it moves (pet.css, .pet-pm). A grown-up's form
+ * and branch still show: a titan is wider, a wraith fades out at the hem,
+ * and the branch marks and a radiant one's stars go in the air around it.
+ */
+function photoPixels(d: CustomDesign, stage: Exclude<Stage, 'egg'>, form: Form, branch?: BranchId | null): Dot[] {
+  const fine: Grid = photoGrid(d, stage).map((r) => [...r])
+  if (stage === 'adult') {
+    if (form === 'titan') widen(fine)
+    else if (form === 'wraith') fadeHem(fine)
+    if (branch) branchMarks(fine, branch)
+    if (form === 'radiant' && (BRANCH_BY_ID.get(branch ?? '')?.tier ?? 0) < 3) sparkle(fine)
+  }
+  const dots: Dot[] = []
+  fine.forEach((row, y) =>
+    row.forEach((ch, x) => {
+      if (ch !== '.') dots.push({ x, y, ch })
+    })
+  )
+  return dots
+}
+
+/** Titan, on a picture: two dots wider each side, the middle column repeated (as fatten does on the authored grid). */
+function widen(g: Grid): void {
+  for (let pass = 0; pass < 2; pass++) {
+    let x0 = SPRITE_SIZE
+    let x1 = -1
+    g.forEach((row) =>
+      row.forEach((ch, x) => {
+        if (ch === '.') return
+        x0 = Math.min(x0, x)
+        x1 = Math.max(x1, x)
+      })
+    )
+    if (x1 < 0) return
+    const cx = Math.floor((x0 + x1) / 2)
+    const left = x0 > 0
+    const right = x1 < SPRITE_SIZE - 1
+    if (!left && !right) return
+    for (const row of g) {
+      const old = [...row]
+      for (let x = 0; x < row.length; x++) {
+        if (left && x < cx) row[x] = old[x + 1]
+        else if (right && x > cx) row[x] = old[x - 1]
+      }
+    }
+  }
+}
+
+/** Wraith, on a picture: its bottom rows thin out to nothing, a dot at a time. */
+function fadeHem(g: Grid): void {
+  let hem = -1
+  g.forEach((row, y) => {
+    if (row.some((c) => c !== '.')) hem = y
+  })
+  for (let k = 0; k < 3 && hem - k >= 0; k++) {
+    const y = hem - k
+    // Every other dot on the last row, every third above it, every fourth above that.
+    const every = k + 2
+    g[y].forEach((ch, x) => {
+      if (ch !== '.' && (x + y) % every === 0) g[y][x] = '.'
+    })
+  }
 }
 
 /** A row of same-coloured dots, drawn as one rect. */

@@ -1987,6 +1987,16 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.maker.build.even': { ko: '균형 잡힌 몸', en: 'balanced build' },
   'pet.maker.tooSmall': { ko: '도트가 너무 적어요. 더 칠해 주세요.', en: 'Too few dots. Paint some more.' },
   'pet.maker.redo': { ko: '사진에서 다시', en: 'Redo from photo' },
+  'pet.maker.colorCount': { ko: '색 개수', en: 'Colour count' },
+  'pet.maker.colorCountDesc': {
+    ko: '적을수록 단순하고, 많을수록 사진에 가까워요. 바꾸면 사진에서 다시 만들어요.',
+    en: 'Fewer is simpler, more is closer to the photo. Changing it remakes the dots from the photo.'
+  },
+  'pet.maker.photoColor': { ko: '색 {n}', en: 'Colour {n}' },
+  'pet.maker.photoHint': {
+    ko: '사진을 32x32 도트 그대로 그려요. 얼굴은 따로 그리지 않고 기분은 움직임으로 보여 줘요.',
+    en: 'The photo is drawn as 32x32 dots as it is. No face is added; its mood shows in how it moves.'
+  },
   'pet.stat.species': { ko: '종', en: 'Strain' },
   'pet.form.radiant': { ko: '광휘', en: 'Radiant' },
   'pet.form.sturdy': { ko: '견실', en: 'Sturdy' },

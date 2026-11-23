@@ -102,7 +102,24 @@
   touch-action: none;
 }
 
-/* The 12x12 dots: live beside the cut-out, editable on the last step. */
+/* The faithful picture: a 32x32 canvas, scaled up with hard edges. Live
+   beside the cut-out, editable on the last step. */
+.pm-pixels {
+  image-rendering: pixelated;
+}
+.pm-mini-photo {
+  width: 96px;
+}
+.pm-edit {
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+.pm-tools.pm-wrap {
+  flex-wrap: wrap;
+}
+
+/* The 12x12 dots of a species made before the faithful picture. */
 .pm-mini,
 .pm-grid {
   display: grid;

@@ -1264,6 +1264,28 @@
 .pet-px-u {
   fill: var(--pc-b, var(--accent-2));
 }
+/* A faithful picture's own colours (petCustomArt PHOTO_DOT), set per species
+   as --pp-A.. by customVars. Its colours are the photo's, so the diet's hue
+   turn is left off it. */
+.pet-px-A { fill: var(--pp-A); }
+.pet-px-B { fill: var(--pp-B); }
+.pet-px-C { fill: var(--pp-C); }
+.pet-px-D { fill: var(--pp-D); }
+.pet-px-E { fill: var(--pp-E); }
+.pet-px-F { fill: var(--pp-F); }
+.pet-px-G { fill: var(--pp-G); }
+.pet-px-H { fill: var(--pp-H); }
+.pet-px-I { fill: var(--pp-I); }
+.pet-px-J { fill: var(--pp-J); }
+.pet-px-K { fill: var(--pp-K); }
+.pet-px-L { fill: var(--pp-L); }
+.pet-px-M { fill: var(--pp-M); }
+.pet-px-N { fill: var(--pp-N); }
+.pet-px-O { fill: var(--pp-O); }
+.pet-px-P { fill: var(--pp-P); }
+.pet-lcd.pet-photo .pet-sprite {
+  filter: none;
+}
 
 /* Grown-up forms used to recolour the body here (grey with red eyes for the
    neglected one), which is a lot of why adults read as a downgrade. A form is
@@ -1312,6 +1334,87 @@
 }
 .pet-s-egg .pet-sprite {
   animation: pet-rock 2.4s steps(1, end) infinite;
+}
+/* A faithful picture has no face to wear its mood, so it moves it: a happy
+   one skips (two quick hops), a sad one sinks a dot and looks from side to
+   side, a sick one shivers, an asleep one only breathes. Hungry and fine keep
+   the plain hop. Translates only, whole dots (see pet-twinkle-reel for why
+   nothing here scales). .pet-pm is left off while something else moves it. */
+.pet-pm.pet-m-happy .pet-sprite:not(.chew) {
+  animation: pet-pm-skip 1.2s steps(1, end) infinite;
+}
+.pet-pm.pet-m-sad .pet-sprite:not(.chew) {
+  animation: pet-pm-sway 3.6s steps(1, end) infinite;
+}
+.pet-pm.pet-m-sick .pet-sprite:not(.chew) {
+  animation: pet-pm-shiver 0.6s steps(1, end) infinite;
+}
+.pet-pm.pet-m-asleep .pet-sprite:not(.chew) {
+  animation: pet-pm-breathe 3.2s steps(1, end) infinite;
+}
+@keyframes pet-pm-skip {
+  0%,
+  15% {
+    transform: translateY(-6.25cqmin);
+  }
+  16%,
+  30% {
+    transform: translateY(0);
+  }
+  31%,
+  45% {
+    transform: translateY(-9.375cqmin);
+  }
+  46%,
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes pet-pm-sway {
+  0%,
+  40% {
+    transform: translate(0, 3.125cqmin);
+  }
+  41%,
+  60% {
+    transform: translate(-3.125cqmin, 3.125cqmin);
+  }
+  61%,
+  80% {
+    transform: translate(0, 3.125cqmin);
+  }
+  81%,
+  100% {
+    transform: translate(3.125cqmin, 3.125cqmin);
+  }
+}
+@keyframes pet-pm-shiver {
+  0%,
+  25% {
+    transform: translateX(-3.125cqmin);
+  }
+  26%,
+  50% {
+    transform: translateX(0);
+  }
+  51%,
+  75% {
+    transform: translateX(3.125cqmin);
+  }
+  76%,
+  100% {
+    transform: translateX(0);
+  }
+}
+@keyframes pet-pm-breathe {
+  0%,
+  50% {
+    transform: translateY(0);
+  }
+  51%,
+  100% {
+    transform: translateY(3.125cqmin);
+  }
 }
 /* The accent dots twinkle: same beat as pet-twinkle (lit, then 15% from 51%),
    but as a two-frame reel. .pet-tw is the window; the reel holds the lit dots

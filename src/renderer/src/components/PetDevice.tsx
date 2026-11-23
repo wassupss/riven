@@ -85,6 +85,7 @@ import {
   type Stage
 } from '../state/pet'
 import { customOf, designOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
+import { PHOTO_DOT } from './petCustomArt'
 import {
   cardOf,
   decodeCard,
@@ -235,7 +236,11 @@ function Glyph({ rows, className }: { rows: string[]; className?: string }): JSX
  */
 export function customVars(d: CustomDesign): CSSProperties {
   const dark = hslOf(d.colors.body).l < 0.32
+  // A faithful picture's own colours, one variable each (.pet-px-A.. in pet.css).
+  const photo: Record<string, string> = {}
+  d.photo?.palette.forEach((c, i) => (photo[`--pp-${PHOTO_DOT[i]}`] = c))
   return {
+    ...photo,
     '--pc-b': d.colors.body,
     '--pc-n': d.colors.shade,
     '--pc-k': d.colors.highlight,
@@ -311,17 +316,29 @@ export function Creature({
       bodyLit: lit(runs)
     }
   }, [runs, outfit])
+  // A faithful picture has many more runs (its 16 colours break rows up), so
+  // its runs are drawn as one <path> per colour instead: a dozen or so nodes
+  // instead of several hundred rects. Whole-dot rectangles, so crispEdges
+  // draws them exactly as the rects would be.
+  const asPaths = !!design?.photo
   const dots = (list: typeof runs): JSX.Element[] =>
-    list.map((d) => (
-      <rect
-        key={`${d.x},${d.y}`}
-        className={`pet-px pet-px-${d.ch}`}
-        x={d.x}
-        y={d.y}
-        width={d.w}
-        height="1"
-      />
-    ))
+    asPaths
+      ? Object.entries(
+          list.reduce<Record<string, string>>((by, d) => {
+            by[d.ch] = `${by[d.ch] ?? ''}M${d.x} ${d.y}h${d.w}v1h${-d.w}z`
+            return by
+          }, {})
+        ).map(([ch, d]) => <path key={ch} className={`pet-px pet-px-${ch}`} d={d} />)
+      : list.map((d) => (
+          <rect
+            key={`${d.x},${d.y}`}
+            className={`pet-px pet-px-${d.ch}`}
+            x={d.x}
+            y={d.y}
+            width={d.w}
+            height="1"
+          />
+        ))
   // One full-box svg on the shared 32-dot grid; every layer letterboxes the same
   // way, so stacked layers line up dot for dot.
   const plate = (children: JSX.Element | JSX.Element[], extra?: string): JSX.Element => (
@@ -348,9 +365,13 @@ export function Creature({
         </div>
       </div>
     ) : null
+  // A faithful picture has no face, so its mood is in how it moves (pet.css,
+  // .pet-pm). Not while something else is moving it: an egg rocks, a wraith
+  // floats, growing up hops and flickers.
+  const moves = !!design?.photo && stage !== 'egg' && form !== 'wraith' && !evolving && !whiteout
   return (
     <div
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
+      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}${design?.photo ? ' pet-photo' : ''}${moves ? ' pet-pm' : ''}`}
       style={design ? customVars(design) : undefined}
       aria-hidden="true"
     >
