@@ -2395,8 +2395,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Let this pet go? It stays in the album.'
   },
   'pet.hint': {
-    ko: '에이전트가 쓴 토큰 {n}개가 먹이 한 알이 됩니다. 캐시를 다시 읽은 분량은 세지 않아요.',
-    en: "Every {n} tokens your agents spend become one kibble. Re-read cache doesn't count."
+    ko: '에이전트가 쓴 토큰 {n}개가 먹이 한 알이 돼요. 캐시에서 다시 읽은 토큰은 가격대로 10%만 쳐요.',
+    en: 'Every {n} tokens your agents spend make one kibble. Cache reads count at 10%, as they are priced.'
   },
   'pet.never': { ko: '아직 없음', en: 'Never' },
   'pet.dur.now': { ko: '방금', en: 'just now' },

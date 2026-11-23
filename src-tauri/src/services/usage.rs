@@ -429,7 +429,7 @@ fn window(o: Option<&Value>) -> Value {
 }
 
 pub fn usage_codex() -> Value {
-  let mut out = json!({ "installed": false, "totalTokens": 0, "primary": null, "primaryWindowMinutes": null, "secondary": null });
+  let mut out = json!({ "installed": false, "totalTokens": 0, "cachedTokens": 0, "primary": null, "primaryWindowMinutes": null, "secondary": null });
   if std::fs::metadata(home().join(".codex")).is_err() {
     return out;
   }
@@ -441,6 +441,9 @@ pub fn usage_codex() -> Value {
     walk_jsonl(&day_dir(t), &mut files, 4000);
   }
   let mut total = 0.0f64;
+  // The part of `total` that was cached input (Codex's input_tokens includes
+  // it), so the pet can weigh it like a Claude cache read.
+  let mut cached = 0.0f64;
   let mut newest = 0.0f64;
   for file in &files {
     let mut lines = Vec::new();
@@ -479,6 +482,7 @@ pub fn usage_codex() -> Value {
       let last = payload.get("info").and_then(|i| i.get("last_token_usage")).filter(|v| !v.is_null());
       if last.is_some() && local_day_key(ts) == today {
         total += n0(last, "input_tokens") + n0(last, "output_tokens") + n0(last, "reasoning_output_tokens") + n0(last, "cache_write_input_tokens");
+        cached += n0(last, "cached_input_tokens").min(n0(last, "input_tokens"));
       }
       let rl = payload.get("rate_limits").filter(|v| !v.is_null() && v.as_bool() != Some(false));
       let at = parse_iso(ts);
@@ -494,5 +498,6 @@ pub fn usage_codex() -> Value {
     }
   }
   out["totalTokens"] = jsnum(total);
+  out["cachedTokens"] = jsnum(cached);
   out
 }

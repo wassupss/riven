@@ -905,6 +905,8 @@ const api = {
     codex: (): Promise<{
       installed: boolean
       totalTokens: number
+      // The part of totalTokens that was cached input (missing from older builds).
+      cachedTokens?: number
       primary: { usedPct: number; resetsAt: string | null } | null
       primaryWindowMinutes: number | null
       secondary: { usedPct: number; resetsAt: string | null } | null

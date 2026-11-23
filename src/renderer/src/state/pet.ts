@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { UsageToday } from './usage'
+import type { ModelUsage, UsageToday } from './usage'
 import {
   designOf,
   isCustomId,
@@ -20,12 +20,16 @@ import {
 // when it comes back, which lands on the same numbers a running timer would.
 // ---------------------------------------------------------------------------
 
-// 20k FRESH tokens (see freshTokens) = one kibble. Everything downstream counts
-// kibble, not tokens, so the numbers stay human-sized: a heavy agent day of ~6M
-// fresh tokens is ~300 kibble, which is a few days of real work to full grown
-// rather than the twenty minutes a 1k rate would have made it.
-export const KIBBLE_TOKENS = 20_000
-// A kibble's worth of fullness: 25 kibble (25k tokens) takes an empty pet to full.
+// Food is counted in FOOD tokens (see foodOf): input, output and cache writes
+// in full, cache reads at CACHE_READ_WEIGHT. 150k food tokens = one kibble.
+// Everything downstream counts kibble, not tokens, so the numbers stay
+// human-sized. A heavy agent day observed at ~6.4M fresh tokens plus ~478M cache
+// reads is ~54M food tokens, ~360 kibble: a few days of real work to full grown.
+// (Before cache reads counted, the same day was ~6.4M at 20k a kibble, ~320
+// kibble; the rate was raised with the formula so a day still feeds about as
+// much, while a day of wasteful re-caching now feeds far less than lean work.)
+export const KIBBLE_TOKENS = 150_000
+// A kibble's worth of fullness: 25 kibble (3.75M food tokens) takes an empty pet to full.
 export const FULLNESS_PER_KIBBLE = 4
 export const MOOD_PER_KIBBLE = 1.5
 // Full → empty in 8 hours of silence.
@@ -190,7 +194,7 @@ export const STAGE_XP = [0, 10, 60, 250, 800]
 // Adult-form thresholds.
 export const WRAITH_NEGLECT_RATIO = 0.4
 export const RADIANT_NEGLECT_RATIO = 0.08
-// A gorged pet: sustained ~200k fresh tokens an hour over its whole life, which
+// A gorged pet: sustained ~1.5M food tokens an hour over its whole life, which
 // is heavier than a heavy day's average.
 export const TITAN_KIBBLE_PER_HOUR = 10
 
@@ -511,18 +515,67 @@ export function flavorOf(model: string): Flavor {
   return 'other'
 }
 
-/** Today's fresh tokens split by model, for feeding one flavour at a time. */
-export function freshByFlavor(today: UsageToday | null | undefined): Record<string, number> {
+/**
+ * What a cache READ is worth as food, against a fresh token. It is the price
+ * ratio: a cache read is billed at a tenth of the model's input price. Ignoring
+ * reads (as food once did) starved lean CLI work, which is nearly all cache
+ * reads, and rewarded re-caching the same context over and over; counting them
+ * in full would drown everything else (they are ~98% of a busy day's raw total).
+ */
+export const CACHE_READ_WEIGHT = 0.1
+/**
+ * Which food formula the sample keys belong to (see foodTotals). Bumped when the
+ * formula changes, so the first sample under a new one only sets a baseline
+ * instead of feeding the difference between two formulas as a burst of spend.
+ */
+export const FOOD_FORMULA = 2
+
+/** One model's day as food: fresh tokens in full, cache reads at CACHE_READ_WEIGHT. */
+export function foodOf(m: Pick<ModelUsage, 'input' | 'output' | 'cacheWrite' | 'cacheRead'>): number {
+  const n = (v: number): number => (Number.isFinite(v) && v > 0 ? v : 0)
+  return n(m.input) + n(m.output) + n(m.cacheWrite) + n(m.cacheRead) * CACHE_READ_WEIGHT
+}
+
+/**
+ * A day with no per-model breakdown (Codex): its plain total, with the part of it
+ * that was cache reads (`cacheRead`, when the source says) weighed the same way.
+ */
+function plainFood(today: UsageToday): number {
+  const total = Number.isFinite(today.totalTokens) && today.totalTokens > 0 ? today.totalTokens : 0
+  const cached = Math.min(total, Math.max(0, today.cacheRead ?? 0))
+  return Math.floor(total - cached + cached * CACHE_READ_WEIGHT)
+}
+
+/** Today's food split by model, for feeding one flavour at a time. */
+export function foodByFlavor(today: UsageToday | null | undefined): Record<string, number> {
   if (!today) return {}
-  if (!today.perModel?.length) return { other: Math.max(0, Math.floor(today.totalTokens)) }
+  if (!today.perModel?.length) {
+    const food = plainFood(today)
+    return food > 0 ? { other: food } : {}
+  }
   const out: Record<string, number> = {}
   for (const m of today.perModel) {
-    const fresh = Math.max(0, m.input) + Math.max(0, m.output) + Math.max(0, m.cacheWrite)
-    if (fresh <= 0) continue
+    const food = foodOf(m)
+    if (food <= 0) continue
     const f = flavorOf(m.model)
-    out[f] = (out[f] ?? 0) + fresh
+    out[f] = (out[f] ?? 0) + food
   }
+  for (const f of Object.keys(out)) out[f] = Math.floor(out[f])
   return out
+}
+
+/**
+ * The counters one usage poll feeds the pet: one per account AND model (so its
+ * diet records which model paid), keyed `f<formula>:<account>::<flavor>`.
+ */
+export function foodTotals(accounts: Array<{ id: string; today: UsageToday | null | undefined }>): Record<string, number> {
+  const totals: Record<string, number> = {}
+  for (const a of accounts) {
+    if (!a.today) continue
+    for (const [flavor, food] of Object.entries(foodByFlavor(a.today)))
+      totals[`f${FOOD_FORMULA}:${a.id}::${flavor}`] = food
+  }
+  return totals
 }
 
 /** What it has grown up on: the dominant flavour and how much of its diet that is. */
@@ -1089,25 +1142,20 @@ export function tokenDelta(prev: number, next: number): number {
   return next >= prev ? Math.floor(next - prev) : Math.floor(next)
 }
 
-// What counts as food in a day's usage. Cache READS are re-reading a context the
-// agent already paid for: on a busy day they are ~98% of the raw token total
-// (485M of 486M observed), so feeding on the raw number would drown every other
-// signal and max the growth curve within an hour. Food is the fresh tokens — what
-// the agent actually wrote, plus what it read for the first time. An account that
-// reports no per-model breakdown (Codex) can only offer its plain total.
-export function freshTokens(today: UsageToday | null | undefined): number {
+// A day's usage as food (see foodOf and CACHE_READ_WEIGHT). An account that
+// reports no per-model breakdown (Codex) offers its plain total, with its cached
+// input weighed like any cache read when it says how much that was.
+export function foodTokens(today: UsageToday | null | undefined): number {
   if (!today) return 0
-  if (!today.perModel?.length) return Math.max(0, Math.floor(today.totalTokens))
-  return today.perModel.reduce(
-    (sum, m) => sum + Math.max(0, m.input) + Math.max(0, m.output) + Math.max(0, m.cacheWrite),
-    0
-  )
+  if (!today.perModel?.length) return plainFood(today)
+  return Math.floor(today.perModel.reduce((sum, m) => sum + foodOf(m), 0))
 }
 
 // Per-ACCOUNT baselines, because the account list grows (a Codex install is
 // detected, a profile is added) and summing first would read that as a burst of
-// spend. An account seen for the first time only sets its baseline — its earlier
-// tokens were spent before the pet was watching.
+// spend. An account seen for the first time only sets its baseline: its earlier
+// tokens were spent before the pet was watching. The same goes for a key of a
+// new food formula (FOOD_FORMULA), so a formula change never feeds a jump.
 export function sampleAccounts(
   seen: Record<string, number>,
   totals: Record<string, number>
@@ -1350,7 +1398,7 @@ interface PetStore {
   /** Apply elapsed-time hunger/mood decay up to `now`, to the pet out of the bag. */
   tick: (now?: number) => void
   /**
-   * Record a usage sample and feed the growth. Keys are `<account>::<flavor>`,
+   * Record a usage sample and feed the growth. Keys are foodTotals' `<formula>:<account>::<flavor>`,
    * so each model's tokens are tracked (and fed) separately. Only the pet out
    * of the bag eats; the rest wait their turn.
    */

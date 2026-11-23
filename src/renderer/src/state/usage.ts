@@ -14,6 +14,9 @@ export interface UsageToday {
   totalCost: number
   totalTokens: number
   perModel: ModelUsage[]
+  // With no per-model breakdown (Codex): how much of totalTokens was cached
+  // input, so the pet can weigh it like any cache read (pet.ts foodOf).
+  cacheRead?: number
 }
 export interface PlanLimit {
   usedPct: number
@@ -93,7 +96,7 @@ export const useUsage = create<UsageState>((set, get) => ({
           id: 'codex',
           cli: 'codex',
           label: '',
-          today: { totalCost: 0, totalTokens: cx.totalTokens, perModel: [] },
+          today: { totalCost: 0, totalTokens: cx.totalTokens, cacheRead: cx.cachedTokens ?? 0, perModel: [] },
           limits: { session: cx.secondary, weekly: cx.primary },
           codexWindowMinutes: cx.primaryWindowMinutes
         })

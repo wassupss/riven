@@ -57,8 +57,8 @@ import {
   discoveredBranches,
   dietOf,
   flushPetSave,
-  freshByFlavor,
-  freshTokens,
+  foodTokens,
+  foodTotals,
   feedFrame,
   growthOf,
   isNight,
@@ -119,7 +119,7 @@ import {
 // The economy lives in state/pet.ts (pure + unit-tested) and the art in
 // petSprites.ts. This file is the device: wiring, dragging, and the screens.
 //
-// Feeding reads the summed per-account `usage.today` through freshTokens, driven
+// Feeding reads the per-account `usage.today` through foodTotals, driven
 // by the shared usage poll — chewing is triggered by an actual feed, so it works
 // the same in both windows. Nothing animates while nobody is looking; hunger is
 // charged on waking, because decay() replays the elapsed time in one step.
@@ -803,13 +803,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   useEffect(() => {
     if (!loaded) return
     // One counter per account AND model, so the pet's diet records which model
-    // actually paid for each meal (see flavorOf).
-    const totals: Record<string, number> = {}
-    const add = (id: string, today: Parameters<typeof freshByFlavor>[0]): void => {
-      for (const [flavor, fresh] of Object.entries(freshByFlavor(today))) totals[`${id}::${flavor}`] = fresh
-    }
-    for (const a of accounts) if (a.today) add(a.id, a.today)
-    if (!Object.keys(totals).length && fallbackToday) add('claude', fallbackToday)
+    // actually paid for each meal (see foodTotals).
+    let totals = foodTotals(accounts)
+    if (!Object.keys(totals).length && fallbackToday) totals = foodTotals([{ id: 'claude', today: fallbackToday }])
     if (Object.keys(totals).length) sample(totals)
   }, [loaded, accounts, fallbackToday, sample])
 
@@ -1599,7 +1595,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       now: Date.now(),
       busy,
       recent,
-      todayTokens: accounts.reduce((n, a) => n + freshTokens(a.today), 0),
+      todayTokens: accounts.reduce((n, a) => n + foodTokens(a.today), 0),
       limit,
       editedFiles: new Set(editedToday.map((e) => e.path)).size,
       dur: (ms) => dur(t, ms),

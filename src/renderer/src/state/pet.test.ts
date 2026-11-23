@@ -21,7 +21,10 @@ import {
   effectiveMs,
   feedStreak,
   flavorOf,
-  freshByFlavor,
+  foodByFlavor,
+  foodTotals,
+  CACHE_READ_WEIGHT,
+  FOOD_FORMULA,
   isNight,
   nightMsBetween,
   noteEvolution,
@@ -30,7 +33,7 @@ import {
   dayKey,
   decay,
   feed,
-  freshTokens,
+  foodTokens,
   formOf,
   growthOf,
   levelCost,
@@ -100,30 +103,76 @@ describe('tokensToKibble', () => {
   })
 })
 
-describe('freshTokens', () => {
-  const today = (perModel: ModelUsage[]): UsageToday => ({
+describe('foodTokens', () => {
+  const today = (perModel: ModelUsage[], extra: Partial<UsageToday> = {}): UsageToday => ({
     totalCost: 0,
     totalTokens: 999_999,
-    perModel
+    perModel,
+    ...extra
   })
 
-  it('counts input, output and cache writes — never cache reads', () => {
+  it('counts input, output and cache writes in full, and cache reads at their price ratio', () => {
+    expect(CACHE_READ_WEIGHT).toBe(0.1)
     expect(
-      freshTokens(
+      foodTokens(
         today([
           { model: 'opus', input: 3000, output: 1_400_000, cacheWrite: 5_000_000, cacheRead: 478_000_000, cost: 0 }
         ])
       )
-    ).toBe(6_403_000)
+    ).toBe(6_403_000 + 47_800_000)
+  })
+
+  it('feeds lean cache-read work, not only re-caching', () => {
+    const lean = foodTokens(today([{ model: 'opus', input: 0, output: 100_000, cacheWrite: 0, cacheRead: 20_000_000, cost: 0 }]))
+    expect(lean).toBe(2_100_000)
   })
 
   it('falls back to the plain total when there is no breakdown (Codex)', () => {
-    expect(freshTokens(today([]))).toBe(999_999)
+    expect(foodTokens(today([]))).toBe(999_999)
+  })
+
+  it("weighs Codex's cached input like a cache read", () => {
+    expect(foodTokens(today([], { totalTokens: 1_000_000, cacheRead: 800_000 }))).toBe(200_000 + 80_000)
+    // A figure past the total is clamped, never negative food.
+    expect(foodTokens(today([], { totalTokens: 100, cacheRead: 500 }))).toBe(10)
   })
 
   it('is zero for a missing day', () => {
-    expect(freshTokens(null)).toBe(0)
-    expect(freshTokens(undefined)).toBe(0)
+    expect(foodTokens(null)).toBe(0)
+    expect(foodTokens(undefined)).toBe(0)
+  })
+})
+
+describe('foodTotals', () => {
+  const day = (cacheRead: number): UsageToday => ({
+    totalCost: 0,
+    totalTokens: 0,
+    perModel: [{ model: 'claude-opus-5', input: 0, output: 1000, cacheWrite: 0, cacheRead, cost: 0 }]
+  })
+
+  it('keys every counter by formula, account and flavour', () => {
+    expect(foodTotals([{ id: 'claude', today: day(10_000) }, { id: 'x', today: null }])).toEqual({
+      [`f${FOOD_FORMULA}:claude::opus`]: 2000
+    })
+  })
+
+  it('stays monotone through the day', () => {
+    let prev = 0
+    for (const r of [0, 5, 9, 10, 11, 19, 20, 1_000_001]) {
+      const v = foodTotals([{ id: 'a', today: day(r) }])[`f${FOOD_FORMULA}:a::opus`]
+      expect(v).toBeGreaterThanOrEqual(prev)
+      prev = v
+    }
+  })
+
+  it('does not feed a jump when the formula changes mid-day', () => {
+    // The old formula's counter, then the first sample under the new one: the
+    // new key is a baseline, not 47M tokens of food.
+    const before = { 'claude::opus': 6_403_000 }
+    const first = sampleAccounts(before, foodTotals([{ id: 'claude', today: day(478_000_000) }]))
+    expect(first.delta).toBe(0)
+    const next = sampleAccounts(first.seen, foodTotals([{ id: 'claude', today: day(478_100_000) }]))
+    expect(next.delta).toBe(10_000)
   })
 })
 
@@ -570,7 +619,7 @@ describe('diet', () => {
     expect(flavorOf('<synthetic>')).toBe('other')
   })
 
-  it('splits today by model, counting only fresh tokens', () => {
+  it('splits today by model, cache reads at a tenth', () => {
     const today = {
       totalCost: 0,
       totalTokens: 0,
@@ -579,7 +628,7 @@ describe('diet', () => {
         { model: 'claude-haiku-4-5', input: 0, output: 50, cacheWrite: 0, cacheRead: 5000, cost: 0 }
       ]
     }
-    expect(freshByFlavor(today)).toEqual({ opus: 200, haiku: 50 })
+    expect(foodByFlavor(today)).toEqual({ opus: 900_200, haiku: 550 })
   })
 
   it('records what each meal was made of', () => {
