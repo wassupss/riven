@@ -150,10 +150,16 @@ function remember(bornAt: number, sessionId: string, cwd: string): void {
 
 // ---- launching ------------------------------------------------------------------------
 
+/**
+ * Where an assistant over several workspaces runs: riven's own folder
+ * (userData/pet-assistants), else the home folder. A folder of its own:
+ * trusting it (the CLI asks once, as a card on the pet) trusts nothing else,
+ * and no project's files are loaded into it.
+ */
 async function homeDir(): Promise<string> {
   if (home) return home
   const d = await window.api.env.defaults().catch(() => null)
-  home = d?.home || '/'
+  home = d?.petHome || d?.home || '/'
   return home
 }
 

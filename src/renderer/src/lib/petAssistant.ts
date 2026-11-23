@@ -122,8 +122,8 @@ export interface Scope {
   workspaces: string[]
   /**
    * Where its CLI runs: the one workspace's folder when it has exactly one,
-   * else null (the caller uses the home folder: a session spanning several
-   * workspaces belongs to none of them).
+   * else null (the caller uses riven's own folder for pet assistants: a
+   * session spanning several workspaces belongs to none of them).
    */
   cwd: string | null
 }

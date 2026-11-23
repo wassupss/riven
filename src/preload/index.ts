@@ -183,6 +183,8 @@ const api = {
       platform: string
       claudePath: string | null
       hostname?: string
+      /** Where a pet assistant over several workspaces runs (riven's own folder). */
+      petHome?: string | null
     }> => ipcRenderer.invoke('env:defaults')
   },
   workspace: {
