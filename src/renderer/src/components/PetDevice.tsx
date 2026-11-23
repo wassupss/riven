@@ -1,4 +1,15 @@
 import { announceNest, servePet } from '../lib/petCommand'
+import { balloonText, defaultAssistant, isAssistant } from '../lib/petAssistant'
+import {
+  askAssistant,
+  chooseAssistant,
+  helloAssistants,
+  interruptAssistant,
+  onAssistants,
+  openAssistantChat,
+  type AssistCard,
+  type AssistStatus
+} from '../lib/petAssistBus'
 import { useUI } from '../state/ui'
 import PetManage from './PetManage'
 import { isPageHidden } from '../lib/windowVisibility'
@@ -14,6 +25,7 @@ import {
   Heart,
   ListTree,
   MessageCircle,
+  MessagesSquare,
   PawPrint,
   Pin,
   Swords,
@@ -58,6 +70,7 @@ import {
   type Mood,
   type PetSave,
   speciesName,
+  petTitle,
   type Species
 } from '../state/pet'
 import { STATS, XP_TOKENS, decorationsOf, nextDecoration, statsOf, topStat } from '../state/petLevel'
@@ -124,6 +137,10 @@ const RECENT_KEEP = 8
 const NOTICE_MS = 4000
 // An answer is a sentence, not a mood, give it time to be read.
 const ANSWER_MS = 7000
+// An assistant's reply (펫 비서) is longer than a canned answer.
+const REPLY_MS = 12_000
+// How much of the last reply the talk card keeps; the rest is in the conversation.
+const REPLY_CARD_MAX = 600
 /** How long the line it says on opening the menu stays up. */
 const MENU_HI_MS = 4000
 const MENU_HI_COUNT = 6
@@ -562,6 +579,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [mime, setMime] = useState<string | null>(null)
   const mimeRef = useRef(false)
   const [mode, setMode] = useState<ScreenMode>('char')
+  // 펫 비서: what each assistant pet's session is doing (state/petAssistants
+  // runs them in riven's window and tells every pet over lib/petAssistBus),
+  // and the last thing each one answered, for the talk card.
+  const [assist, setAssist] = useState<Record<number, AssistStatus>>({})
+  const [replies, setReplies] = useState<Record<number, string>>({})
+  // The handlers that speak live below the early return: reached through a ref.
+  const assistRef = useRef<{ reply: (bornAt: number, text: string, error: string | null) => void; note: (bornAt: number, text: string) => void }>({
+    reply: NOOP,
+    note: NOOP
+  })
   // Settings > 리븐펫 looks after the pets too, from another window when the
   // pet lives in its own: it asks here (lib/petCommand), and this window answers
   // with the nest as it is after the command. A new pet comes out at once.
@@ -573,6 +600,28 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       return { result, nest: briefOf(usePet.getState()) }
     })
   }, [loaded])
+  // The assistants' news. Only where the pets are (the save is here), so an
+  // assistant's own food lands on it (feedOwn) in exactly one window.
+  useEffect(() => {
+    if (!loaded) return
+    const off = onAssistants((m) => {
+      if (m.type === 'status') setAssist((a) => ({ ...a, [m.status.bornAt]: m.status }))
+      else if (m.type === 'fed') usePet.getState().feedOwn(m.bornAt, m.food)
+      else if (m.type === 'reply') {
+        if (m.text.trim()) setReplies((r) => ({ ...r, [m.bornAt]: m.text.trim().slice(0, REPLY_CARD_MAX) }))
+        assistRef.current.reply(m.bornAt, m.text, m.error)
+      } else if (m.type === 'note') assistRef.current.note(m.bornAt, m.text)
+    })
+    // A window that just opened asks how they are.
+    helloAssistants()
+    return off
+  }, [loaded])
+  // A card (a permission, a question) for the focused pet opens its talk card,
+  // where it is answered.
+  const focusCards = assist[Math.floor(pet.bornAt)]?.cards.length ?? 0
+  useEffect(() => {
+    if (focusCards > 0) setTalking(true)
+  }, [focusCards])
   // And tells everyone listening (a Settings list) whenever the nest changes:
   // a pet out, a name, a level. Compared as text, since the pets themselves
   // change on every gain.
@@ -1210,9 +1259,19 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // Unnamed: the screen shows what it is rather than the words "no name".
   const name = pet.name || null
 
+  // 펫 비서: the focused pet's session, and another one out waiting on you.
+  const focusAssist = isAssistant(pet.assistant) ? assist[Math.floor(pet.bornAt)] : undefined
+  const otherWaiting = companions.find(({ p }) => isAssistant(p.assistant) && assist[Math.floor(p.bornAt)]?.waiting)
   // One short line, the most pressing thing first, in the balloon over the pet.
   const bubble =
     speech ??
+    (focusAssist?.waiting
+      ? t('pet.assist.needsYou')
+      : focusAssist?.busy
+        ? t('pet.assist.working')
+        : otherWaiting
+          ? t('pet.assist.otherWaits', { name: petTitle(otherWaiting.p, t) })
+          : null) ??
     (limit && limit.usedPct >= 90
       ? t('pet.say.limit', { left: Math.max(0, 100 - Math.round(limit.usedPct)) })
       : needBreak
@@ -1240,6 +1299,27 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const speak = (msg: string, ms = ANSWER_MS): void => {
     setSpeech(msg)
     later(() => setSpeech((v) => (v === msg ? null : v)), ms)
+  }
+  // 펫 비서: what an assistant answered. The focused one says it; another
+  // one out says it with its name in front.
+  const nameOf = (bornAt: number): string => {
+    const p = pets.find((x) => Math.floor(x.bornAt) === bornAt)
+    return p ? petTitle(p, t) : ''
+  }
+  assistRef.current = {
+    reply: (bornAt, text, error) => {
+      const line = error ? t('pet.assist.failed') : balloonText(text) || t('pet.assist.doneEmpty')
+      if (bornAt === Math.floor(pet.bornAt)) return speak(line, REPLY_MS)
+      if (shown.some((b) => Math.floor(b) === bornAt)) speak(t('pet.assist.otherSays', { name: nameOf(bornAt), text: line }), REPLY_MS)
+    },
+    note: (bornAt, text) => {
+      if (bornAt === Math.floor(pet.bornAt)) speak(balloonText(text), ANSWER_MS)
+    }
+  }
+  const openChat = (bornAt: number): void => {
+    openAssistantChat(bornAt)
+    // From its own window: bring riven's window up, where the conversation opens.
+    if (detached) void window.api.pet.openSettings('pet-chat')
   }
   /** What it says when the menu opens. */
   const menuLine = (): string => t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
@@ -1482,6 +1562,25 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const ask = (question: string): void => {
     const q = question.trim()
     if (!q) return
+    // An assistant pet (펫 비서) asks Claude instead: its session, in riven's
+    // window, answers into the balloon (assistRef's reply, below).
+    if (isAssistant(pet.assistant)) {
+      setMode('char')
+      // A slash command can write the keeper's global settings (/model,
+      // /config): a pet never types one.
+      if (q.startsWith('/')) return speak(t('pet.assist.noCommands'))
+      askAssistant(
+        {
+          bornAt: Math.floor(pet.bornAt),
+          title: petTitle(pet, t),
+          species: speciesName(pet.species, t, customOf(pet.species) ?? pet.custom),
+          assistant: pet.assistant
+        },
+        q
+      )
+      speak(t('pet.assist.thinking'), NOTICE_MS)
+      return
+    }
     // It answers by SAYING it, the screen goes back to the pet and the balloon
     // carries the reply. A transcript would just be a small chat window, and
     // there is a real one of those two panes away.
@@ -1702,7 +1801,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
       {mode === 'talk' && (
         <div className="pet-talk">
-          <p className="pet-empty">{t('pet.talk.prompt')}</p>
+          <p className="pet-empty">
+            {isAssistant(pet.assistant) ? t('pet.assist.prompt', { name: petTitle(pet, t) }) : t('pet.talk.prompt')}
+          </p>
         </div>
       )}
 
@@ -1832,11 +1933,42 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         name="q"
         autoFocus
         autoComplete="off"
-        placeholder={t('pet.talk.placeholder')}
+        placeholder={isAssistant(pet.assistant) ? t('pet.assist.ask') : t('pet.talk.placeholder')}
         // The pet is a drag handle; the field must not be one.
         onPointerDown={(e) => e.stopPropagation()}
       />
     </form>
+  )
+
+  // 펫 비서, under the ask field: what waits on you (a permission, a
+  // question, a menu), what it last said, stop, and the whole conversation.
+  const focusReply = replies[Math.floor(pet.bornAt)]
+  const assistBox = talking && isAssistant(pet.assistant) && (
+    <div className="pet-assist" onPointerDown={(e) => e.stopPropagation()}>
+      {focusAssist?.cards.map((c) => (
+        <AssistCardView key={c.id} card={c} onAnswer={(choices) => chooseAssistant(Math.floor(pet.bornAt), c.id, choices)} />
+      ))}
+      {!focusAssist?.cards.length && focusReply && <p className="pet-assist-reply">{focusReply}</p>}
+      <div className="pet-assist-row">
+        {focusAssist?.busy ? (
+          <>
+            <span className="pet-assist-state">
+              <i className="pet-assist-dots" aria-hidden />
+              {t('pet.assist.working')}
+            </span>
+            <button type="button" className="pet-btn small" onClick={() => interruptAssistant(Math.floor(pet.bornAt))}>
+              {t('pet.assist.stop')}
+            </button>
+          </>
+        ) : (
+          <span className="pet-assist-state">{focusAssist?.parked ? t('pet.assist.resting') : ''}</span>
+        )}
+        <button type="button" className="pet-btn small" onClick={() => openChat(Math.floor(pet.bornAt))}>
+          <MessagesSquare size={11} />
+          <span>{t('pet.assist.open')}</span>
+        </button>
+      </div>
+    </div>
   )
 
   /** A menu entry does its thing and the menu goes away. */
@@ -1946,11 +2078,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           onLayout={openLayout}
           onMotion={openMotion}
           onMakeSpecies={openMaker}
+          onAssistant={(on) =>
+            apply({ op: 'assistant', ...ref0(active), assistant: { ...(pet.assistant ?? defaultAssistant()), on } })
+          }
+          onOpenChat={() => openChat(Math.floor(pet.bornAt))}
         />
       ) : (
         <div className="pet-card-body">
           {screen}
           {askForm}
+          {assistBox}
         </div>
       )}
     </div>
@@ -2085,6 +2222,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             />
             {/* What the pane you are watching is doing, acted out. */}
             {mime && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}
+            <AssistBadge status={focusAssist} t={t} />
           </div>
         </div>
         {companions.map(({ p, i }) => (
@@ -2093,6 +2231,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             pet={p}
             cheer={compCheer === p.bornAt}
             awake={awake}
+            assist={isAssistant(p.assistant) ? assist[Math.floor(p.bornAt)] : undefined}
             title={t('pet.comp.hint', { name: p.name || speciesName(p.species, t, customOf(p.species) ?? p.custom) })}
             onFocus={() => {
               if (Date.now() - dragEndAt.current < 300) return
@@ -2119,6 +2258,7 @@ function Companion({
   pet,
   cheer,
   awake,
+  assist,
   title,
   onFocus,
   onPointerDown,
@@ -2128,12 +2268,15 @@ function Companion({
   pet: PetSave
   cheer: boolean
   awake: boolean
+  /** Its assistant session (펫 비서), when it is one. */
+  assist?: AssistStatus
   title: string
   onFocus: () => void
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void
   onPointerUp: () => void
 }): JSX.Element {
+  const t = useT()
   useCustomSpecies((s) => s.rev)
   const sm = motionOfSpecies(pet.species)
   const motions = useMemo(
@@ -2177,6 +2320,53 @@ function Companion({
         motions={motions}
         frames={sm?.frames}
       />
+      <AssistBadge status={assist} t={t} />
+    </div>
+  )
+}
+
+/**
+ * 펫 비서 at work: a small mark on the pet while its assistant runs a turn,
+ * another while it waits on you. CSS only (pet.css), paused with the rest of
+ * the pet while nobody looks.
+ */
+function AssistBadge({ status, t }: { status: AssistStatus | undefined; t: TFn }): JSX.Element | null {
+  if (!status || (!status.busy && !status.waiting)) return null
+  const label = status.waiting ? t('pet.assist.needsYou') : t('pet.assist.working')
+  return <span className={`pet-assist-badge ${status.waiting ? 'waiting' : 'busy'}`} title={label} aria-label={label} role="status" />
+}
+
+/**
+ * A card waiting on you in the talk card: each of its questions with its
+ * choices. The answer goes once every question has one.
+ */
+function AssistCardView({ card, onAnswer }: { card: AssistCard; onAnswer: (choices: string[]) => void }): JSX.Element {
+  const [picked, setPicked] = useState<string[]>([])
+  const pick = (i: number, choice: string): void => {
+    const next = [...picked]
+    next[i] = choice
+    setPicked(next)
+    if (card.questions.every((_, j) => next[j] !== undefined)) onAnswer(next)
+  }
+  return (
+    <div className={`pet-assist-card ${card.kind}`}>
+      {card.questions.map((q, i) => (
+        <div key={i} className="pet-assist-q">
+          <p>{q.question}</p>
+          <div className="pet-assist-opts">
+            {q.options.map((o) => (
+              <button
+                key={o}
+                type="button"
+                className={`pet-btn small${picked[i] === o ? ' primary' : ''}`}
+                onClick={() => pick(i, o)}
+              >
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

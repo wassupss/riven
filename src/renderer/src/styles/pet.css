@@ -1604,3 +1604,199 @@
 .pet-detached .pet-arena * {
   -webkit-app-region: no-drag;
 }
+
+
+/* ---- 펫 비서: a pet that is a real Claude assistant ----
+   Under the ask field in the talk card (drawn at the card's 1.4x zoom, so in
+   the screens' 9px type): what waits on you, what it last said, stop and the
+   whole conversation. Everything wraps by word and never pushes the card
+   wider (min-width: 0, overflow-wrap). */
+.pet-assist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 1px 0;
+  font-size: 9px;
+  line-height: 1.35;
+  min-width: 0;
+}
+.pet-assist-reply {
+  margin: 0;
+  max-height: 96px;
+  overflow-y: auto;
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, black 25%, var(--bg-2));
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.pet-assist-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 5px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-2));
+}
+.pet-assist-q p {
+  margin: 0 0 3px;
+  max-height: 64px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+.pet-assist-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.pet-assist .pet-btn.small {
+  height: 16px;
+  max-width: 100%;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 9px;
+}
+.pet-assist-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.pet-assist-state {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+}
+/* Three dots, one lit at a time: CSS only, paused while nobody looks. */
+.pet-assist-dots {
+  flex: none;
+  width: 12px;
+  height: 4px;
+  background:
+    radial-gradient(circle, var(--accent) 1.5px, transparent 1.6px) 0 50% / 4px 4px repeat-x;
+  animation: pet-assist-dots 1.2s steps(3, end) infinite;
+  opacity: 0.9;
+}
+@keyframes pet-assist-dots {
+  from {
+    clip-path: inset(0 66% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+/* On the pet itself: a small mark while its assistant works, another while
+   it waits on you. */
+.pet-assist-badge {
+  position: absolute;
+  top: 6%;
+  right: 8%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, black 55%, transparent);
+  background: var(--accent);
+  pointer-events: none;
+  animation: pet-assist-pulse 1.6s ease-in-out infinite;
+}
+.pet-assist-badge.waiting {
+  background: var(--warning);
+  animation-duration: 0.9s;
+}
+.pet-comp .pet-assist-badge {
+  width: 7px;
+  height: 7px;
+}
+@keyframes pet-assist-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+}
+.pet-asleep .pet-assist-badge,
+.pet-asleep .pet-assist-dots {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-assist-badge,
+  .pet-assist-dots {
+    animation: none;
+  }
+}
+.pet-detached .pet-assist,
+.pet-detached .pet-assist * {
+  -webkit-app-region: no-drag;
+}
+
+/* The whole conversation, in riven's window (PetChatDialog): the CLI chat
+   pane's own parts in a modal. */
+.pet-chat-modal {
+  width: 680px;
+  max-width: calc(100vw - 32px);
+  height: min(720px, 82vh);
+  max-height: 82vh;
+}
+.pet-chat-head {
+  gap: 8px;
+  min-width: 0;
+}
+.pet-chat-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.pet-chat-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pet-chat-tools {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pet-chat-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pet-chat-icon:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.pet-chat-icon.on {
+  background: var(--hover-strong);
+  color: var(--fg);
+}
+.pet-chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}

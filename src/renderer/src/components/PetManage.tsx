@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PawPrint, EyeOff, ImagePlus, LayoutGrid, Move, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
+import { PawPrint, EyeOff, ImagePlus, LayoutGrid, MessagesSquare, Move, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { MAX_PETS, petSubtitle, petTitle, type Hatch, type NestBrief } from '../state/pet'
 import { designOf, type CustomSpecies } from '../state/petSpecies'
@@ -38,7 +38,9 @@ export default function PetManage({
   onOpenSettings,
   onLayout,
   onMotion,
-  onMakeSpecies
+  onMakeSpecies,
+  onAssistant,
+  onOpenChat
 }: {
   nest: NestBrief
   detached: boolean
@@ -65,6 +67,10 @@ export default function PetManage({
   onMotion: () => void
   /** The species maker (opens over Settings). */
   onMakeSpecies: () => void
+  /** 펫 비서: the focused pet as an assistant, on or off (its settings are in Settings). */
+  onAssistant: (on: boolean) => void
+  /** Its whole conversation, in riven's window. */
+  onOpenChat: () => void
 }): JSX.Element {
   const t = useT()
   const [asking, setAsking] = useState<Danger | null>(null)
@@ -189,6 +195,27 @@ export default function PetManage({
           <span>{t('pet.mo.open')}</span>
         </button>
       </div>
+
+      {/* 펫 비서, for the focused one: on or off here, the rest in Settings. */}
+      <div className="pet-manage-line">
+        <span title={t('pet.assist.hint')}>{t('pet.assist.label')}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!!focused?.assistant?.on}
+          aria-label={t('pet.assist.label')}
+          className={`pet-switch${focused?.assistant?.on ? ' on' : ''}`}
+          onClick={() => onAssistant(!focused?.assistant?.on)}
+        >
+          <i />
+        </button>
+      </div>
+      {focused?.assistant?.on && (
+        <button type="button" className="pet-btn wide" onClick={onOpenChat}>
+          <MessagesSquare size={12} />
+          <span>{t('pet.assist.open')}</span>
+        </button>
+      )}
 
       <div className="pet-manage-label">{t('pet.nest.newPet')}</div>
       {own.length > 0 && (
