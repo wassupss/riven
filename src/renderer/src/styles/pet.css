@@ -1,5 +1,6 @@
 /* =========================================================================
-   리븐펫 — a handheld virtual-pet device floating over the workbench.
+   리븐펫: a virtual pet floating over the workbench (or on the desktop, in
+   its own window). Just the creature; its menu and screens open beside it.
    Only design tokens (var(--…)) are used, so it follows every theme. All
    classes are prefixed `pet-`. Every animation is paused under `.pet-asleep`
    (window in the background) so an unwatched pet costs nothing.
@@ -10,7 +11,8 @@
   right: 16px;
   bottom: 42px; /* clear of the status bar */
   z-index: var(--z-float);
-  width: 202px;
+  width: 128px;
+  padding-top: 15px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -24,106 +26,7 @@
   cursor: grabbing;
 }
 
-/* ---- the unit ----
-   A small desk terminal: a screen in a bezel, a deck under it carrying the name,
-   a power lamp and the three keys, and a little stand so it sits on the surface
-   rather than floating. Deliberately its own object — square-shouldered and
-   asymmetric, nothing like the round keychain toys this borrows its ideas from. */
-.pet-unit {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.pet-case {
-  width: 100%;
-  padding: 9px 9px 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  border-radius: 12px 12px 9px 9px;
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.05), transparent 38%),
-    linear-gradient(180deg, var(--bg-3), color-mix(in srgb, var(--bg-2) 76%, black));
-  border: 1px solid var(--edge-strong);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
-    0 10px 24px rgb(0 0 0 / 0.45);
-}
-/* The strip under the screen: name on the left, lamp, keys on the right. */
-.pet-deck {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 1px;
-}
-.pet-logo {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  /* Printed on the case, not drawn on top of it. */
-  color: color-mix(in srgb, var(--fg) 26%, transparent);
-  text-shadow: 0 1px 0 rgb(0 0 0 / 0.5);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pet-led {
-  flex: 0 0 auto;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--success) 70%, transparent);
-}
-/* Asleep, the lamp dims like anything else left on standby. */
-.pet-asleep .pet-led {
-  background: color-mix(in srgb, var(--success) 35%, var(--bg));
-  box-shadow: none;
-}
-/* The stand: a neck under the case and a foot on the desk. One tone with the
-   case's underside — outlines here made it look like two loose bars. */
-.pet-stand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  /* Tuck under the case's border so the neck grows out of it. */
-  margin-top: -1px;
-}
-.pet-stand::before {
-  content: '';
-  width: 22px;
-  height: 6px;
-  background: color-mix(in srgb, var(--bg-2) 72%, black);
-  border-left: 1px solid var(--edge);
-  border-right: 1px solid var(--edge);
-}
-.pet-stand i {
-  width: 62px;
-  height: 5px;
-  border-radius: 1px 1px 3px 3px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-3) 85%, black), color-mix(in srgb, var(--bg) 55%, black));
-  border: 1px solid var(--edge);
-  border-top: 0;
-  box-shadow: 0 4px 10px rgb(0 0 0 / 0.45);
-}
-
-/* ---- the menu strip ----
-   Segments of the screen, in one row along its foot. Each is the button for its
-   own function: point at one to see its name on the top line, press it to run
-   it. (They used to be printed, not pressed, and were worked by three keys on
-   the case; ten of those presses to clear one mess is how you get a pet nobody
-   touches.) */
-.pet-icons {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 1px;
-  padding: 2px 1px 0;
-  border-top: 1px solid rgb(255 255 255 / 0.06);
-}
+/* ---- care buttons (the menu's top row) ---- */
 .pet-ic {
   flex: 1 1 0;
   display: inline-flex;
@@ -157,25 +60,6 @@
   border-color: var(--accent);
   color: var(--accent);
 }
-/* Where the A key's highlight is. It blinks, so it is obvious even at this size. */
-.pet-ic.picked {
-  border-color: var(--accent);
-  color: var(--accent);
-  animation: pet-blink 0.9s steps(1, end) infinite;
-}
-@keyframes pet-blink {
-  0%,
-  55% {
-    border-color: var(--accent);
-    background: var(--accent-muted);
-  }
-  56%,
-  100% {
-    border-color: transparent;
-    background: transparent;
-  }
-}
-
 /* The way out of whatever screen is up, on its own title line. */
 .pet-back {
   flex: 0 0 auto;
@@ -198,14 +82,9 @@
   color: var(--fg);
 }
 
-/* The pet's place in the yard. */
-.pet-actor {
-  display: contents;
-}
-
 /* ---- in its own window: fill it, and let the OS do the dragging ----
    -webkit-app-region does NOT inherit. Setting it on the root alone left every
-   visible pixel (the case covers the root entirely) computing to `none`, so the
+   visible pixel (the pet covers the root entirely) computing to `none`, so the
    window had no handle at all and would not move. Every descendant is made a
    handle explicitly, and the things you operate opt back out. */
 .pet-detached {
@@ -219,21 +98,14 @@
 }
 /* On a transparent window a soft box-shadow is not a shadow — it is a grey
    smudge around the device, because there is nothing behind it to fall on.
-   (Measured: alpha 5–71 over the whole margin.) Keep the crisp inner lighting,
-   drop everything that blurs outward. */
-.pet-detached .pet-case {
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-}
-.pet-detached .pet-stand i,
+   (Measured: alpha 5–71 over the whole margin.) Drop everything that blurs
+   outward. */
 .pet-detached .pet-card,
 .pet-detached .pet-balloon {
   box-shadow: none;
 }
 .pet-detached .pet-bare {
   filter: none;
-}
-.pet-detached.pet-chrome-bare {
-  width: 100%;
 }
 
 /* What you press, type in or scroll must stay clickable. */
@@ -255,12 +127,10 @@
   -webkit-app-region: no-drag;
 }
 
-/* ---- chrome levels ---- */
 /* A screen of the bare pet's (stats, dex, a question...) opens in a card beside
-   it, made like the right-click menu: a plain panel, no glass, no bezel and no
-   icon strip, so nothing about it looks like the device. The screen's type is
-   sized for the device's little LCD, so the card's content is drawn at 1.4x,
-   which brings its 8-9px lines to the menu's reading size. */
+   it, made like the right-click menu: a plain panel. The screens' type is sized
+   in 8-9px lines, so the card's content is drawn at 1.4x, which brings them to
+   the menu's reading size. */
 .pet-card {
   position: absolute;
   bottom: 0;
@@ -309,11 +179,6 @@
 .pet-detached .pet-card,
 .pet-detached .pet-card * {
   -webkit-app-region: no-drag;
-}
-/* Creature only: no case, no glass, no gauges — just the pet, on nothing. */
-.pet-chrome-bare {
-  width: 128px;
-  padding-top: 15px;
 }
 .pet-bare {
   position: relative;
@@ -435,16 +300,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* ---- the LCD, sunk into a bezel ---- */
-.pet-bezel {
-  width: 100%;
-  padding: 5px;
-  border-radius: 10px;
-  background: color-mix(in srgb, black 45%, var(--bg-2));
-  box-shadow:
-    inset 0 2px 5px rgb(0 0 0 / 0.55),
-    0 1px 0 rgb(255 255 255 / 0.05);
-}
+/* ---- a screen (stats, dex, a question...), drawn in the card beside the pet ---- */
 .pet-screen {
   position: relative;
   display: flex;
@@ -468,19 +324,6 @@
     ),
     radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%),
     var(--well);
-}
-/* The creature's own space: whatever the strips don't take. It keeps its square
-   aspect (preserveAspectRatio), so a tall sprite is letterboxed, never clipped. */
-/* flex-basis 0, not auto: the sprite is square, so sizing this box from its
-   content made it as tall as the screen is wide and pushed the lower icon strip
-   off the glass. The SVG letterboxes itself inside whatever is left. */
-.pet-yard {
-  position: relative;
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 .pet-lcd {
   width: 100%;
@@ -516,28 +359,6 @@
   overflow: visible;
 }
 /* The nest: a dot per pet in the corner, the one on screen filled. */
-.pet-nest {
-  position: absolute;
-  top: 1px;
-  left: 2px;
-  z-index: 1;
-  display: flex;
-  gap: 2px;
-}
-.pet-nest-dot {
-  width: 5px;
-  height: 5px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, black);
-  background: transparent;
-  cursor: pointer;
-}
-.pet-nest-dot.on {
-  background: color-mix(in srgb, var(--accent-2) 30%, black);
-}
-.pet-nest-dot:hover:not(.on) {
-  background: var(--hover-strong);
-}
 /* What it has left lying about, and whether it needs a doctor. */
 .pet-floor {
   position: absolute;
@@ -624,13 +445,6 @@
     transform: translateY(3px);
   }
 }
-/* With no case to sit on, it hugs the creature more tightly. */
-.pet-balloon.bare {
-  margin-bottom: 3px;
-  padding: 4px 7px;
-  font-size: 10px;
-}
-
 /* Asleep: the Z hangs by its head and blinks slowly. */
 .pet-zzz {
   position: absolute;
@@ -808,8 +622,7 @@
   padding: 2px 4px;
   text-align: center;
 }
-/* What you asked: quieter, and pushed to the right like a sent message. */
-/* The one text field on the device, sitting on the case under the glass. */
+/* The ask field, under the talk screen in the card. */
 .pet-ask {
   display: flex;
   align-items: center;
@@ -887,12 +700,6 @@
   border: 1px solid transparent;
   border-radius: 3px;
 }
-/* The row B will act on. */
-.pet-row.picked {
-  border-color: var(--accent);
-  background: var(--accent-muted);
-  animation: pet-blink 0.9s steps(1, end) infinite;
-}
 .pet-row span {
   font-size: 9px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
@@ -907,24 +714,6 @@
 }
 .pet-row.danger b {
   color: var(--danger);
-}
-.pet-seg {
-  display: flex;
-  gap: 2px;
-}
-.pet-seg button {
-  padding: 1px 4px;
-  border: 1px solid var(--edge);
-  border-radius: 3px;
-  background: transparent;
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
-  font-size: 8px;
-  cursor: pointer;
-}
-.pet-seg button.on {
-  border-color: var(--accent-border);
-  background: var(--accent-muted);
-  color: var(--accent);
 }
 .pet-note {
   margin: 3px 0 0;
@@ -1063,7 +852,7 @@
   align-items: center;
   gap: 2px;
 }
-/* Squared off on purpose: the whole device is made of dots. */
+/* Squared off on purpose: the whole pet is made of dots. */
 .pet-bar i {
   width: 100%;
   background: color-mix(in srgb, var(--accent) 72%, transparent);
@@ -1134,7 +923,7 @@
   align-items: center;
   gap: 2px;
 }
-/* Name on its own line so the five cells always fit the 110px device screen. */
+/* Name on its own line so the five cells always fit the card. */
 .pet-dex-name {
   flex: 0 0 100%;
   font-size: 8px;
@@ -1562,8 +1351,7 @@
 }
 
 /* ---- readouts printed on the glass ---- */
-.pet-screen-top,
-.pet-screen-bottom {
+.pet-screen-top {
   flex: 0 0 auto;
   display: flex;
   font-size: 9px;
@@ -1593,27 +1381,6 @@
 .pet-screen-mood.mood-ok {
   color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
-.pet-screen-bottom {
-  flex-direction: column;
-  gap: 2px;
-}
-/* The stage and how far it is from the next one — printed on the glass, since
-   the case itself carries no text. */
-.pet-screen-foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 8px;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
-}
-.pet-screen-foot span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pet-screen-foot span:first-child {
-  color: color-mix(in srgb, var(--fg) 70%, transparent);
-}
 
 .pet-gauge {
   display: flex;
@@ -1639,128 +1406,6 @@
 }
 .pet-cell.on.tone-mood {
   background: var(--accent-2);
-}
-
-/* The ask field's own way out: it stays open while the pet answers on the glass. */
-.pet-ask-x {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
-  cursor: pointer;
-}
-.pet-ask-x:hover {
-  background: var(--hover-strong);
-  color: var(--fg);
-}
-
-/* ---- the three keys ----
-   Centred on the case, under the deck. They are the device's own controls and the
-   target of the keyboard shortcuts; the icon strip on the glass does the same
-   things in one press. */
-.pet-pad {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 5px 0 1px;
-}
-.pet-key {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 19px;
-  height: 19px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
-  border-radius: 50%;
-  /* Domed plastic: lit from above, with a shadow where it meets the case. */
-  background:
-    radial-gradient(70% 60% at 40% 26%, rgb(255 255 255 / 0.3), transparent 70%),
-    linear-gradient(180deg, color-mix(in srgb, var(--fg) 22%, var(--bg-3)), color-mix(in srgb, var(--bg) 60%, black));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.18),
-    0 2px 3px rgb(0 0 0 / 0.5);
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
-  cursor: pointer;
-}
-.pet-key:hover {
-  border-color: var(--accent-border);
-  color: var(--accent);
-}
-.pet-key:active {
-  transform: translateY(1px);
-  box-shadow: inset 0 2px 3px rgb(0 0 0 / 0.5);
-}
-.pet-key-cap {
-  font-family: var(--font-mono, monospace);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* ---- the deck ----
-   What is left on the face of the case now that the three buttons are gone: the
-   name, the power lamp, and a clock you can press for the clock screen. */
-.pet-clock-btn {
-  margin-left: auto;
-  padding: 1px 4px;
-  font-family: var(--font-mono, monospace);
-  font-size: 9px;
-  letter-spacing: 0.02em;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
-  cursor: pointer;
-}
-.pet-clock-btn:hover {
-  border-color: var(--accent-border);
-  color: var(--accent);
-}
-.pet-clock-btn.on {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ---- the details drawer ---- */
-.pet-stats {
-  margin: 0;
-  padding: 7px 2px 1px;
-  border-top: 1px solid var(--hairline);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.pet-stats > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.pet-stats dt {
-  color: var(--fg-dim);
-  font-size: 9px;
-}
-.pet-stats dd {
-  margin: 0;
-  font-size: 9px;
-  font-variant-numeric: tabular-nums;
-}
-.pet-stats .warn {
-  color: var(--warning);
-}
-/* Collapsed: the screen alone, pocket-sized. */
-.pet-collapsed {
-  width: 132px;
 }
 
 /* 리븐펫's own window: nothing but the device floats there, so the document has

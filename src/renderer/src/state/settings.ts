@@ -1,9 +1,6 @@
 import { create } from 'zustand'
 import { PANEL_BG_DEFAULTS, sanitizePanelBg, samePanelBg, type PanelBgSettings } from './panelBackground'
 
-// Just the pet (right-click for its menu), or the little handheld it lives in.
-export type PetChrome = 'bare' | 'device'
-
 /** A phone the user approved for remote control (state/remote). */
 export interface RemoteDevice {
   id: string
@@ -59,9 +56,6 @@ export interface Settings extends PanelBgSettings {
   // eaten, how it grew — lives in pet.json, not here.)
   petShow: boolean
   petPos: { x: number; y: number } | null
-  // Nothing but the creature on a transparent background (its menu is a right
-  // click away), or the small handheld for those who asked for one.
-  petChrome: PetChrome
   // Living in its own window on the desktop instead of inside riven's. On by
   // default: a desk pet belongs on the desk.
   petDetached: boolean
@@ -178,7 +172,6 @@ export const DEFAULT_SETTINGS: Settings = {
   usagePinned: false,
   petShow: true,
   petPos: null,
-  petChrome: 'bare',
   petDetached: true,
   petOnTop: false,
   petBreakMin: 60,
@@ -250,7 +243,10 @@ export const REMOVED_SETTINGS: ReadonlyArray<string> = [
   'aiCompleteModel',
   'aiApiKey',
   // The first remote-control build's shared secret, replaced by per-device keys.
-  'remoteKey'
+  'remoteKey',
+  // The pet's look ('bare' or the 'device' handheld; older builds also wrote
+  // 'full' and 'screen'). The handheld is gone: the pet is always just itself.
+  'petChrome'
 ]
 
 // Old default terminal-font stacks. Users who never customized the terminal font
@@ -277,8 +273,13 @@ const LEGACY_TERMINAL_FONTS = new Set([
 // Values an older build may still hold, read from settings.json at boot or
 // pulled from the cloud row (settingsSync), which an older build keeps writing.
 export function migrateLegacy(s: Settings): Settings {
-  // The pet's old card and screen-only sizes became the bare pet with a menu.
-  if (s.petChrome !== 'bare' && s.petChrome !== 'device') s = { ...s, petChrome: 'bare' }
+  // A setting that no longer exists (an older build keeps writing petChrome to
+  // the synced row) is dropped, not carried along.
+  if (REMOVED_SETTINGS.some((k) => k in s)) {
+    const out = { ...s } as Record<string, unknown>
+    for (const k of REMOVED_SETTINGS) delete out[k]
+    s = out as unknown as Settings
+  }
   // A hand-edited or half-written background setting falls back to "off"
   // rather than reaching the CSS as something unexpected.
   const bg = sanitizePanelBg(s)

@@ -785,18 +785,21 @@ describe('how it ships', () => {
   it('is out on the desk by default, and not in the way', () => {
     expect(DEFAULT_SETTINGS.petShow).toBe(true)
     expect(DEFAULT_SETTINGS.petDetached).toBe(true)
-    expect(DEFAULT_SETTINGS.petChrome).toBe('bare')
     // Floating above everything is offered, not assumed.
     expect(DEFAULT_SETTINGS.petOnTop).toBe(false)
   })
 
-  // An older build still writes its size names ('full', 'screen') to the synced
-  // settings row. Taken as is, the pet showed none of its screens: the menu
-  // closed and nothing opened.
-  it('turns an old size name into the bare pet', () => {
-    for (const old of ['full', 'screen'])
-      expect(migrateLegacy({ ...DEFAULT_SETTINGS, petChrome: old } as unknown as Settings).petChrome).toBe('bare')
-    expect(migrateLegacy({ ...DEFAULT_SETTINGS, petChrome: 'device' }).petChrome).toBe('device')
+  // The handheld look is gone. An older build still writes petChrome ('device',
+  // 'full', 'screen') to the synced row and to settings.json: it is dropped, and
+  // the rest of the settings still load.
+  it('drops the old pet look setting and keeps the rest', () => {
+    expect('petChrome' in DEFAULT_SETTINGS).toBe(false)
+    for (const old of ['device', 'bare', 'full', 'screen']) {
+      const got = migrateLegacy({ ...DEFAULT_SETTINGS, petShow: false, petChrome: old } as unknown as Settings)
+      expect('petChrome' in got).toBe(false)
+      expect(got.petShow).toBe(false)
+    }
+    expect(migrateLegacy(DEFAULT_SETTINGS)).toBe(DEFAULT_SETTINGS)
   })
 })
 

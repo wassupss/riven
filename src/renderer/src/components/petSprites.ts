@@ -1391,7 +1391,7 @@ export const ARROW_RIGHT = ['.p..', '.pp.', 'pppp', '.pp.', '.p..']
 //          without a single extra grid to keep in sync.
 //   crown  a 6×2 patch above the head — horns, an antenna, a tuft. This is the
 //          silhouette difference, so two strains are told apart in one glance
-//          even in the 'bare' size where there is nothing else on screen.
+//          even at the pet's own small size, with nothing else on screen.
 //   colour CSS, not dots (see .pet-sp-* in pet.css): the body hue is mixed with
 //          the theme's accent so a strain reads as itself in any theme.
 //
