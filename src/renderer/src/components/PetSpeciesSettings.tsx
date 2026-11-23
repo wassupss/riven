@@ -1,9 +1,10 @@
 import '../styles/pet-maker.css'
-import { useEffect, useMemo, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent } from 'react'
-import { Pencil, Trash2, ImagePlus, PawPrint } from 'lucide-react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent } from 'react'
+import { Pencil, Trash2, ImagePlus, PawPrint, RefreshCw, SquareDashed } from 'lucide-react'
 import { useT } from '../i18n'
 import { Button, Segmented, Switch, TextInput } from './ui/Controls'
 import { Creature } from './PetDevice'
+import PetPixelEditor from './PetPixelEditor'
 import {
   ART,
   MAX_CUSTOM,
@@ -16,6 +17,7 @@ import {
   ROLE_COLOR,
   buildOfDesign,
   cellsOf,
+  minPhotoCells,
   familyOfDesign,
   forgetDesign,
   hexToRgb,
@@ -35,13 +37,16 @@ import {
   backgroundMask,
   cropSquare,
   defaultCrop,
+  designFromPicture,
   faithfulDesignFromPhoto,
+  finishPhoto,
   foregroundOf,
   paintBrush,
   photoArtOf,
   type BrushMode,
   type Rgba
 } from '../lib/petPhoto'
+import { blankDoc, countDots, docOfPhoto, photoOfDoc, type PixelDoc } from '../lib/pixelEdit'
 
 // ---------------------------------------------------------------------------
 // Settings > RivenPet > species from photos: the list of the keeper's own
@@ -101,6 +106,43 @@ function draw(canvas: HTMLCanvasElement | null, img: Rgba, fg?: Uint8Array): voi
 /** The faithful picture's colour choices: fewer reads flatter, more reads closer. */
 const COLOR_COUNTS = [8, 12, 16]
 
+/** The colours a blank canvas starts with (a new colour can be added up to 16). */
+const STARTER = ['#2d2a32', '#ffffff', '#f2c38b', '#c47a45', '#f49ac1', '#6fa8dc', '#8bc34a', '#ffd54f']
+
+/** A blank canvas of `n` dots: a picture with nothing drawn yet (its 12x12 is made from it on save). */
+function blankDesign(n: PhotoSize, name: string): CustomDesign {
+  const doc = blankDoc(n, STARTER)
+  return {
+    name,
+    colors: { body: '#f2c38b', shade: '#c47a45', highlight: '#fbe3c4', accent: '#6fa8dc', white: '#ffffff' },
+    art: Array(ART).fill('.'.repeat(ART)),
+    face: { x: 3, y: 3 },
+    noFace: true,
+    photo: photoOfDoc(doc)
+  }
+}
+
+/**
+ * A faithful-picture draft as it would be kept: the picture tidied of unused
+ * colours, and (when the picture was drawn on) its 12x12 made again from it,
+ * so the battle family and build follow what was drawn. `why` says what is
+ * missing when it cannot be kept.
+ */
+function composePhoto(d: CustomDesign, redrawn: boolean, name: string): { design: CustomDesign | null; why: 'small' | null } {
+  const p = d.photo
+  if (!p) return { design: sanitizeDesign({ ...d, name }), why: null }
+  const photo = finishPhoto(
+    p.rows.map((r) => [...r]),
+    p.palette
+  )
+  if (!photo) return { design: null, why: 'small' }
+  const made = redrawn ? designFromPicture(photo, name) : null
+  // A picture too thin for a 12x12 of its own keeps the one it had (if any).
+  const base = made && cellsOf(made.art) >= MIN_CELLS ? made : d
+  if (cellsOf(base.art) < MIN_CELLS) return { design: null, why: 'small' }
+  return { design: sanitizeDesign({ ...base, name, noFace: true, photo }), why: null }
+}
+
 /** A faithful picture on a canvas of its own grid (scaled up, pixelated, by CSS). */
 function PhotoCanvas({
   photo,
@@ -140,8 +182,8 @@ function Preview({ id, level = 1 }: { id: string; level?: number }): JSX.Element
 }
 
 type Step = 'photo' | 'cutout' | 'dots'
-/** A role of the 12x12, the eraser, the face, or (on a faithful picture) a palette index. */
-type Tool = Role | 'erase' | 'face' | number
+/** A tool of the 12x12 editor (species made before the faithful picture): a role, the eraser or the face. */
+type Tool = Role | 'erase' | 'face'
 
 function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () => void }): JSX.Element {
   const t = useT()
@@ -156,7 +198,17 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   const brush = useRef(new Uint8Array(WORK * WORK))
   const [brushRev, setBrushRev] = useState(0)
   const [draft, setDraft] = useState<CustomDesign | null>(editing ? sanitizeDesign(editing) : null)
-  const [tool, setTool] = useState<Tool>(editing?.photo ? 0 : 'b')
+  const [tool, setTool] = useState<Tool>('b')
+  // The pixel editor's picture: set when a picture is made (or opened), the editor remounted on it.
+  const [seed, setSeed] = useState<{ gen: number; doc: PixelDoc } | null>(
+    editing?.photo ? { gen: 0, doc: docOfPhoto(editing.photo) } : null
+  )
+  // Hand work that remaking from the photo would throw away (a saved picture counts).
+  const [edited, setEdited] = useState(!!editing?.photo)
+  // The picture was drawn on since it was made, so its 12x12 is made again from it.
+  const [redrawn, setRedrawn] = useState(false)
+  // "Throw the hand edits away?", asked in place before something would.
+  const [ask, setAsk] = useState<{ run: () => void } | null>(null)
   const [colorCount, setColorCount] = useState<number>(PHOTO_MAX_COLORS)
   // The picture's grid: more dots, more detail in the same 32 css pixels.
   const [res, setRes] = useState<PhotoSize>(editing?.photo ? photoSizeOf(editing.photo) : PHOTO)
@@ -186,10 +238,12 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   }, [step, sq, fg])
 
   // The draft as it would be saved (a name is not needed to look at it), drawn
-  // by the same Creature as any pet under a throwaway id.
+  // by the same Creature as any pet under a throwaway id. Deferred: remaking a
+  // drawn picture's 12x12 waits for a quiet moment, never a stroke.
+  const lazyDraft = useDeferredValue(draft)
   const preview = useMemo(
-    () => (draft ? sanitizeDesign({ ...draft, name: draft.name.trim() || '-' }) : null),
-    [draft]
+    () => (lazyDraft ? composePhoto(lazyDraft, redrawn, lazyDraft.name.trim() || '-').design : null),
+    [lazyDraft, redrawn]
   )
   useEffect(() => {
     if (preview) noteDesign(DRAFT_ID, preview)
@@ -259,19 +313,9 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
     const y = Math.floor(((e.clientY - r.top) / r.height) * n)
     return x >= 0 && y >= 0 && x < n && y < n ? { x, y } : null
   }
-  // On a faithful picture the brush is one of its colours, or the eraser.
-  const applyPhotoTool = (e: ReactPointerEvent<HTMLElement>): void => {
-    const photo = draft?.photo
-    const c = photo ? cellAt(e, photoSizeOf(photo)) : null
-    if (!c || !draft || !photo) return
-    const ch = typeof tool === 'number' ? (PHOTO_CHARS[tool] ?? '.') : '.'
-    if (photo.rows[c.y][c.x] === ch) return
-    const rows = photo.rows.map((row, y) => (y === c.y ? row.slice(0, c.x) + ch + row.slice(c.x + 1) : row))
-    setDraft({ ...draft, photo: { ...photo, rows } })
-  }
   const applyTool = (e: ReactPointerEvent<HTMLDivElement>): void => {
     const c = cellAt(e)
-    if (!c || !draft || typeof tool === 'number') return
+    if (!c || !draft) return
     if (tool === 'face') {
       const face = { x: Math.max(0, Math.min(ART - 6, c.x - 2)), y: Math.max(0, Math.min(ART - 4, c.y - 1)) }
       if (face.x !== draft.face.x || face.y !== draft.face.y) setDraft({ ...draft, face })
@@ -283,30 +327,61 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
     setDraft({ ...draft, art })
   }
 
+  // Anything that would replace the picture asks first when there is hand work in it.
+  const guard = (run: () => void): void => (edited ? setAsk({ run }) : run())
+  const startPicture = (d: CustomDesign, drawn: boolean): void => {
+    if (!d.photo) return
+    setError(null)
+    setAsk(null)
+    setDraft(d)
+    setSeed((s) => ({ gen: (s?.gen ?? 0) + 1, doc: docOfPhoto(d.photo!) }))
+    setEdited(false)
+    setRedrawn(drawn)
+    setStep('dots')
+  }
+
   // New species are faithful pictures (with their 12x12 made beside them).
   const toDots = (count = colorCount, size = res): void => {
     if (!sq || !fg) return
     const d = faithfulDesignFromPhoto(sq, fg, draft?.name ?? '', count, size)
     if (!d) return setError(t('pet.maker.nothingLeft'))
+    startPicture({ ...d, name: draft?.name ?? '' }, false)
+  }
+  // Or no photo at all: a blank grid to draw on.
+  const toBlank = (): void => startPicture(blankDesign(res, draft?.name ?? ''), true)
+
+  const onPicture = (doc: PixelDoc): void => {
+    setDraft((d) => (d ? { ...d, photo: photoOfDoc(doc) } : d))
+    setEdited(true)
+    setRedrawn(true)
     setError(null)
-    setDraft({ ...d, name: draft?.name ?? '' })
-    setTool(0)
-    setStep('dots')
   }
 
   const save = (): void => {
     if (!draft) return
-    if (cellsOf(draft.art) < MIN_CELLS) return setError(t('pet.maker.tooSmall'))
     const name = draft.name.trim() || t('pet.species.custom')
+    if (draft.photo) {
+      const { design } = composePhoto(draft, redrawn, name)
+      if (!design?.photo) {
+        const min = minPhotoCells(photoSizeOf(draft.photo))
+        const n = countDots(docOfPhoto(draft.photo).cells)
+        // Enough dots, but too thin a shape for the 12x12 the battle side reads.
+        return setError(n < min ? t('pet.px.tooSmall', { n, min }) : t('pet.px.tooThin'))
+      }
+      const now = Date.now()
+      put({ ...design, id: editing?.id ?? newCustomId(now), createdAt: editing?.createdAt ?? now, updatedAt: now })
+      return onDone()
+    }
+    if (cellsOf(draft.art) < MIN_CELLS) return setError(t('pet.maker.tooSmall'))
     const clean = sanitizeDesign({ ...draft, name })
-    // A picture painted down to a speck would be dropped by sanitizeDesign.
-    if (!clean || (draft.photo && !clean.photo)) return setError(t('pet.maker.tooSmall'))
+    if (!clean) return setError(t('pet.maker.tooSmall'))
     const now = Date.now()
     put({ ...clean, id: editing?.id ?? newCustomId(now), createdAt: editing?.createdAt ?? now, updatedAt: now })
     onDone()
   }
 
-  const ready = !!preview
+  // A picture can always be tried: save says what is missing.
+  const ready = !!preview || !!draft?.photo
   const family = preview ? familyOfDesign(preview) : null
   const build = preview ? buildOfDesign(preview) : 0
 
@@ -315,7 +390,8 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
       <Segmented<Step>
         value={step}
         onChange={(s) => {
-          if (s === 'dots' && step !== 'dots' && source) return toDots()
+          // Back to a picture already drawn on: as it was, not remade.
+          if (s === 'dots' && step !== 'dots' && source && !(edited && draft?.photo)) return toDots()
           if (s !== 'dots' || draft) setStep(s)
         }}
         options={[
@@ -387,6 +463,20 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
             {source && (
               <Button onClick={() => fileRef.current?.click()}>{t('pet.maker.pickOther')}</Button>
             )}
+            <div className="pmx-blank">
+              <span className="pm-label">{t('pet.px.orBlank')}</span>
+              <div className="pm-field" title={t('pet.maker.resolutionDesc')}>
+                <span>{t('pet.maker.resolution')}</span>
+                <Segmented<string>
+                  value={String(res)}
+                  onChange={(v) => setRes(Number(v) as PhotoSize)}
+                  options={PHOTO_SIZES.map((n) => ({ value: String(n), label: `${n}` }))}
+                />
+              </div>
+              <Button onClick={() => guard(toBlank)}>
+                <SquareDashed size={14} /> {t('pet.px.blank')}
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -444,102 +534,67 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
         </div>
       )}
 
-      {step === 'dots' && draft?.photo && (
-        <div className="pm-body">
-          <div className="pm-stage">
-            <PhotoCanvas
-              photo={draft.photo}
-              className="pm-edit"
-              onPointerDown={(e) => {
-                drawing.current = true
-                e.currentTarget.setPointerCapture(e.pointerId)
-                applyPhotoTool(e)
-              }}
-              onPointerMove={(e) => drawing.current && applyPhotoTool(e)}
-              onPointerUp={() => (drawing.current = false)}
-            />
-          </div>
-          <div className="pm-side">
-            <label className="pm-field">
-              <span>{t('pet.maker.name')}</span>
-              <TextInput
-                value={draft.name}
-                maxLength={NAME_MAX}
-                placeholder={t('pet.maker.namePh')}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              />
-            </label>
-            {source && (
-              <div className="pm-field" title={t('pet.maker.colorCountDesc')}>
-                <span>{t('pet.maker.colorCount')}</span>
-                <Segmented<string>
-                  value={String(colorCount)}
-                  onChange={(v) => {
-                    setColorCount(Number(v))
-                    toDots(Number(v))
-                  }}
-                  options={COLOR_COUNTS.map((n) => ({ value: String(n), label: String(n) }))}
+      {step === 'dots' && draft?.photo && seed && (
+        <PetPixelEditor
+          key={seed.gen}
+          initial={seed.doc}
+          onChange={onPicture}
+          side={
+            <>
+              <label className="pm-field">
+                <span>{t('pet.maker.name')}</span>
+                <TextInput
+                  value={draft.name}
+                  maxLength={NAME_MAX}
+                  placeholder={t('pet.maker.namePh')}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                 />
-              </div>
-            )}
-            {source && (
-              <div className="pm-field" title={t('pet.maker.resolutionDesc')}>
-                <span>{t('pet.maker.resolution')}</span>
-                <Segmented<string>
-                  value={String(res)}
-                  onChange={(v) => {
-                    const size = Number(v) as PhotoSize
-                    setRes(size)
-                    toDots(colorCount, size)
-                  }}
-                  options={PHOTO_SIZES.map((n) => ({ value: String(n), label: `${n}` }))}
-                />
-              </div>
-            )}
-            <div className="pm-field">
-              <span>{t('pet.maker.colors')}</span>
-              <div className="pm-tools pm-wrap">
-                {draft.photo.palette.map((c, i) => (
-                  <span key={i} className={`pm-tool${tool === i ? ' on' : ''}`}>
-                    <button
-                      type="button"
-                      className="pm-swatch"
-                      title={t('pet.maker.photoColor', { n: i + 1 })}
-                      aria-label={t('pet.maker.photoColor', { n: i + 1 })}
-                      style={{ background: c }}
-                      onClick={() => setTool(i)}
-                    />
-                    <input
-                      type="color"
-                      className="pm-color"
-                      title={t('pet.maker.photoColor', { n: i + 1 })}
-                      value={c}
-                      onChange={(e) => {
-                        const photo = draft.photo
-                        if (!photo) return
-                        const palette = photo.palette.map((p, k) => (k === i ? e.target.value.toLowerCase() : p))
-                        setDraft({ ...draft, photo: { ...photo, palette } })
-                      }}
-                    />
-                  </span>
-                ))}
-              </div>
-              <Segmented<'erase'>
-                // A colour picked above leaves this off.
-                value={tool as 'erase'}
-                onChange={setTool}
-                options={[{ value: 'erase', label: t('pet.maker.role.erase') }]}
-              />
-            </div>
-            <p className="set-note">{t('pet.maker.photoHint', { n: photoSizeOf(draft.photo) })}</p>
-            {family && (
-              <p className="set-note">
-                {t('pet.maker.family', { family: t(`pet.maker.family.${family}`) })} ·{' '}
-                {t(`pet.maker.build.${build > 0.33 ? 'round' : build < -0.33 ? 'lanky' : 'even'}`)}
-              </p>
-            )}
-          </div>
-        </div>
+              </label>
+              {source && (
+                <div className="pm-field" title={t('pet.maker.colorCountDesc')}>
+                  <span>{t('pet.maker.colorCount')}</span>
+                  <Segmented<string>
+                    value={String(colorCount)}
+                    onChange={(v) =>
+                      guard(() => {
+                        setColorCount(Number(v))
+                        toDots(Number(v))
+                      })
+                    }
+                    options={COLOR_COUNTS.map((n) => ({ value: String(n), label: String(n) }))}
+                  />
+                </div>
+              )}
+              {source && (
+                <div className="pm-field" title={t('pet.maker.resolutionDesc')}>
+                  <span>{t('pet.maker.resolution')}</span>
+                  <Segmented<string>
+                    value={String(photoSizeOf(draft.photo))}
+                    onChange={(v) =>
+                      guard(() => {
+                        const size = Number(v) as PhotoSize
+                        setRes(size)
+                        toDots(colorCount, size)
+                      })
+                    }
+                    options={PHOTO_SIZES.map((n) => ({ value: String(n), label: `${n}` }))}
+                  />
+                </div>
+              )}
+              {source && (
+                <Button onClick={() => guard(() => toDots())}>
+                  <RefreshCw size={14} /> {t('pet.px.remake')}
+                </Button>
+              )}
+              {family && (
+                <p className="set-note">
+                  {t('pet.maker.family', { family: t(`pet.maker.family.${family}`) })} ·{' '}
+                  {t(`pet.maker.build.${build > 0.33 ? 'round' : build < -0.33 ? 'lanky' : 'even'}`)}
+                </p>
+              )}
+            </>
+          }
+        />
       )}
 
       {step === 'dots' && draft && !draft.photo && (
@@ -637,12 +692,33 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
         </div>
       )}
 
-      {step === 'dots' && draft && ready && (
+      {step === 'dots' && draft && preview && (
         <div className="pm-stages">
           <span className="pm-label">{t('pet.maker.preview')}</span>
           <div className="pm-row">
             <Preview id={DRAFT_ID} />
             <Preview id={DRAFT_ID} level={50} />
+          </div>
+        </div>
+      )}
+
+      {ask && (
+        <div className="pmx-ask" role="alert">
+          <p>{t('pet.px.discardAsk')}</p>
+          <div className="pmx-ask-row">
+            <Button variant="ghost" onClick={() => setAsk(null)}>
+              {t('pet.maker.cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const run = ask.run
+                setAsk(null)
+                run()
+              }}
+            >
+              {t('pet.px.discard')}
+            </Button>
           </div>
         </div>
       )}
@@ -666,7 +742,7 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
           </Button>
         )}
         {step === 'cutout' && (
-          <Button variant="primary" disabled={!fg} onClick={() => toDots()}>
+          <Button variant="primary" disabled={!fg} onClick={() => guard(() => toDots())}>
             {t('pet.maker.next')}
           </Button>
         )}

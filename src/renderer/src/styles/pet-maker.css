@@ -268,3 +268,195 @@
 .pm-side > .ui-btn {
   align-self: flex-start;
 }
+
+/* The pixel editor of a faithful picture (PetPixelEditor.tsx): one canvas
+   for the dots, a tool row above it and the view controls below. */
+.pmx-stage {
+  width: 300px;
+  max-width: 55%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pmx-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pmx-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: var(--edge);
+}
+.pmx-btn {
+  width: var(--ctl-h);
+  height: var(--ctl-h);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pmx-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.pmx-btn.on {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.pmx-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pmx-btn:focus-visible,
+.pm-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.pmx-caption {
+  margin: 0;
+  min-height: 2.6em;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmx-caption b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.pmx-view {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  box-sizing: content-box;
+  background:
+    repeating-conic-gradient(var(--hover-strong) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px,
+    var(--hover);
+}
+.pmx-view.zoomed {
+  overflow: auto;
+}
+.pmx-canvas {
+  display: block;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.pmx-canvas.tool-picker {
+  cursor: copy;
+}
+.pmx-canvas.tool-fill {
+  cursor: cell;
+}
+
+.pmx-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-style: dashed;
+  background: transparent;
+  color: var(--fg-dim);
+}
+.pmx-add:hover,
+.pmx-add.on {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.pmx-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pmx-add-row code {
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.pmx-pick {
+  width: var(--ctl-h);
+  height: var(--ctl-h);
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+.pmx-pick::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.pmx-pick::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+/* The picture at the pet's own size (32 css pixels), and at twice that. */
+.pmx-real {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.pmx-real canvas {
+  display: block;
+  image-rendering: pixelated;
+  border-radius: 2px;
+  background: var(--hover);
+}
+.pmx-real1 {
+  width: 32px;
+  height: 32px;
+}
+.pmx-real2 {
+  width: 64px;
+  height: 64px;
+}
+.pmx-warn {
+  color: var(--warning);
+}
+
+/* A question asked in place (a full palette, hand work about to go). */
+.pmx-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.pmx-ask p {
+  margin: 0;
+}
+.pmx-ask-row {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* The photo step's other way in: a blank canvas. */
+.pmx-blank {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.pmx-blank > .ui-btn {
+  align-self: flex-start;
+}
+.pm-side > .ui-btn svg,
+.pmx-blank > .ui-btn svg {
+  vertical-align: -2px;
+}

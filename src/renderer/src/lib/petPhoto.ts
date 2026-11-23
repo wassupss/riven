@@ -735,3 +735,32 @@ export function faithfulDesignFromPhoto(
   if (!base || !photo) return null
   return { ...base, noFace: true, photo }
 }
+
+/**
+ * A design around a picture drawn or edited by hand: the 12x12 the battle
+ * family, the build and an older riven read is made from the picture itself
+ * (its dots as a tiny photo, every lit dot subject), the way it is made from
+ * a photo. Null when the picture is too small for that.
+ */
+export function designFromPicture(photo: PhotoArt, name: string): CustomDesign | null {
+  const n = photo.rows.length
+  const data = new Uint8ClampedArray(n * n * 4)
+  const fg = new Uint8Array(n * n)
+  const rgb = photo.palette.map((c) => {
+    const v = parseInt(c.slice(1), 16)
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+  })
+  photo.rows.forEach((row, y) => {
+    for (let x = 0; x < n; x++) {
+      const ch = row[x]
+      if (!ch || ch === '.') continue
+      const c = rgb[PHOTO_CHARS.indexOf(ch)]
+      if (!c) continue
+      const i = y * n + x
+      data.set([c[0], c[1], c[2], 255], i * 4)
+      fg[i] = 1
+    }
+  })
+  const base = designFromPhoto({ width: n, height: n, data }, fg, name)
+  return base ? { ...base, noFace: true, photo } : null
+}
