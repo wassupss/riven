@@ -2437,6 +2437,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.assist.stop': { ko: '중단', en: 'Stop' },
   'pet.assist.resting': { ko: '쉬는 중 (다음 부탁에 깨어나요)', en: 'resting (wakes on the next ask)' },
   'pet.assist.open': { ko: '대화 열기', en: 'Open conversation' },
+  'pet.assist.parkedNote': {
+    ko: '지금은 쉬는 중이에요. 메시지를 보내면 이 대화를 이어서 시작해요.',
+    en: 'Resting now. Send a message to carry on this conversation.'
+  },
   'pet.assist.chatTitle': { ko: '{name} · 대화', en: '{name} · conversation' },
   'pet.assist.chatEmpty': { ko: '아직 나눈 대화가 없어요', en: 'No conversation yet' },
   'pet.assist.off': { ko: '이 펫은 지금 비서가 아니에요', en: 'This pet is not an assistant now' },

@@ -1664,19 +1664,19 @@
 .pet-assist-row {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   min-width: 0;
 }
 .pet-assist-state {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: inline-flex;
+  margin: 0;
+  display: flex;
   align-items: center;
   gap: 4px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  min-width: 0;
   color: var(--fg-dim);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 /* Three dots, one lit at a time: CSS only, paused while nobody looks. */
 .pet-assist-dots {
@@ -1700,8 +1700,8 @@
    it waits on you. */
 .pet-assist-badge {
   position: absolute;
-  top: 6%;
-  right: 8%;
+  top: 10%;
+  right: 14%;
   width: 9px;
   height: 9px;
   border-radius: 50%;

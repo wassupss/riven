@@ -91,6 +91,8 @@ interface Run {
 const runs = new Map<number, Run>()
 let saved: SavedSessions | null = null
 let lastNest: NestBrief | null = null
+/** Which pets were assistants in the last nest heard (birthday -> on). */
+let lastOn: Map<number, boolean> | null = null
 let home: string | null = null
 
 /** The conversation dialog (components/PetChatDialog) open in this window. */
@@ -501,6 +503,15 @@ function onEvent(e: CliEvent): void {
 function onNestBrief(b: NestBrief): void {
   lastNest = b
   const present = new Map(b.pets.map((p) => [Math.floor(p.bornAt), p]))
+  // A session this window does not know (the page was reloaded while Rust
+  // kept it) still goes when its pet is switched off or let go: once, on the
+  // change (or on the first nest heard), never on every announcement.
+  const prevOn = lastOn
+  lastOn = new Map(b.pets.map((p) => [Math.floor(p.bornAt), isAssistant(p.assistant)]))
+  for (const [bornAt, on] of lastOn)
+    if (!on && prevOn?.get(bornAt) !== false && !runs.has(bornAt)) window.api.cliChat.stop(petChatKey(bornAt))
+  for (const bornAt of prevOn?.keys() ?? [])
+    if (!lastOn.has(bornAt) && !runs.has(bornAt)) window.api.cliChat.stop(petChatKey(bornAt))
   for (const run of [...runs.values()]) {
     const p = present.get(run.bornAt)
     if (!p) {

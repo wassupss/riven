@@ -1949,19 +1949,24 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         <AssistCardView key={c.id} card={c} onAnswer={(choices) => chooseAssistant(Math.floor(pet.bornAt), c.id, choices)} />
       ))}
       {!focusAssist?.cards.length && focusReply && <p className="pet-assist-reply">{focusReply}</p>}
+      {/* Its state on a line of its own: beside the buttons it was cut to a letter. */}
+      {focusAssist?.busy ? (
+        <p className="pet-assist-state">
+          <i className="pet-assist-dots" aria-hidden />
+          <span>{t('pet.assist.working')}</span>
+        </p>
+      ) : (
+        focusAssist?.parked && (
+          <p className="pet-assist-state">
+            <span>{t('pet.assist.resting')}</span>
+          </p>
+        )
+      )}
       <div className="pet-assist-row">
-        {focusAssist?.busy ? (
-          <>
-            <span className="pet-assist-state">
-              <i className="pet-assist-dots" aria-hidden />
-              {t('pet.assist.working')}
-            </span>
-            <button type="button" className="pet-btn small" onClick={() => interruptAssistant(Math.floor(pet.bornAt))}>
-              {t('pet.assist.stop')}
-            </button>
-          </>
-        ) : (
-          <span className="pet-assist-state">{focusAssist?.parked ? t('pet.assist.resting') : ''}</span>
+        {focusAssist?.busy && (
+          <button type="button" className="pet-btn small" onClick={() => interruptAssistant(Math.floor(pet.bornAt))}>
+            {t('pet.assist.stop')}
+          </button>
         )}
         <button type="button" className="pet-btn small" onClick={() => openChat(Math.floor(pet.bornAt))}>
           <MessagesSquare size={11} />

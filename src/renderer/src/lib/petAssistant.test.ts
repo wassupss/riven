@@ -128,7 +128,7 @@ describe('personaPrompt', () => {
   })
   it('never uses an em dash', () => {
     const p = personaPrompt({ name: 'a', species: 'b', role: 'c', workspaces: [] })
-    expect(p).not.toContain('—')
+    expect(p).not.toContain(String.fromCharCode(0x2014))
   })
 })
 

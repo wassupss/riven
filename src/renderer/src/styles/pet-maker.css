@@ -1216,3 +1216,10 @@
   background: color-mix(in srgb, var(--info) 16%, transparent);
   color: var(--info);
 }
+/* A very narrow row has no room for a second pill: it goes rather than
+   being cut to a letter (the ⋯ menu still says it is one). */
+@container (max-width: 380px) {
+  .pet-nest-shown.assist {
+    display: none;
+  }
+}

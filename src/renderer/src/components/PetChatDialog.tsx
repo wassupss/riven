@@ -158,7 +158,7 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
                 {model.permissions.map((p) => (
                   <PermissionCard key={p.id} chatKey={chatKey} p={p} onTerminal={toTerminal} />
                 ))}
-                {state.parked && turns.length > 0 && <div className="cli-chat-note parked">{t('clichat.parkedNote')}</div>}
+                {state.parked && turns.length > 0 && <div className="cli-chat-note parked">{t('pet.assist.parkedNote')}</div>}
               </div>
               {!gone && (
                 <div className="chat-composer">
