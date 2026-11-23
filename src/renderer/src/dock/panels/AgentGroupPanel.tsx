@@ -18,7 +18,7 @@ import {
   Target,
   TerminalSquare
 } from 'lucide-react'
-import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
+import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent, interruptPane } from '../../state/agents'
 import {
   useAgentGroups,
   type GroupMember,
@@ -753,7 +753,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const cancelRun = (id: string): void => {
     const run = usePipelineRuns.getState().runs.find((r) => r.id === id)
     const cur = run && run.current >= 0 ? run.stages[run.current] : undefined
-    if (cur?.chatKey) window.api.chat.interrupt(cur.chatKey)
+    if (cur?.chatKey) interruptPane(cur.chatKey)
     cancelRunStore(id)
   }
 
@@ -1811,7 +1811,7 @@ function GoalBoard({ goal, workspace }: { goal: Goal; workspace: string }): JSX.
   const stop = (): void => {
     // End the turns this goal has in flight as well as the goal itself: a member
     // mid-answer would otherwise keep going (and keep spending) after "stop".
-    for (const m of roster?.members ?? []) window.api.chat.interrupt(m.chatKey)
+    for (const m of roster?.members ?? []) interruptPane(m.chatKey)
     useGoals.getState().stop(goal.id)
   }
 

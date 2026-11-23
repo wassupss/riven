@@ -1,14 +1,16 @@
-import { foldLive, liveWork, menuAsks, menuId, menuPick, notifyBody, permissionAsks, permissionDecision, questionAnswersFrom, questionAsks, rosterPatch, type CliLive, type Labels, type MirrorAsk, type TurnDone } from '../lib/cliChatLive'
+import { finishedTasks, foldLive, liveWork, menuAsks, menuId, menuPick, notifyBody, permissionAsks, permissionDecision, questionAnswersFrom, questionAsks, rosterPatch, type CliLive, type Labels, type MirrorAsk, type TurnDone } from '../lib/cliChatLive'
 import type { CliEvent } from '../lib/cliChat'
 import { getActiveApi, hasInitialText } from '../dock/registry'
 import { t } from '../i18n'
 import { getAgentStatus, registerAgent, setAgentStatus, type AgentController } from './agents'
 import { useAskUser } from './askUser'
-import { publishWork } from './chatWork'
+import { publishWork, reportTaskFinished } from './chatWork'
+import { bgTaskOutcome } from '../lib/bgTaskOutcome'
 import { forgetCliChat, markCliChat } from './cliChatKeys'
 import { useRoster, workspaceOfPane } from './roster'
 import { useSession } from './session'
 import { getSettings } from './settings'
+import { useWorkspaceStatus } from './workspaceStatus'
 
 // The CLI chat as the rest of riven sees it: one app-level listener on
 // 'clichat:event' for every CLI chat pane of this window (lib/cliChatLive has
@@ -28,6 +30,15 @@ import { getSettings } from './settings'
 // behind it is here, so it stays right while the panel is not mounted.
 
 const live = new Map<string, CliLive>()
+// The notices a returned delegation's message stands for (returnToCaller ->
+// wake), by its text: the chat view draws that message as these notices.
+const wakes = new Map<string, string[]>()
+const wakeKey = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+/** The notices for a message this pane was woken with, if it was one. */
+export function wakeNotices(text: string): string[] | null {
+  return wakes.get(wakeKey(text)) ?? null
+}
 const waiters = new Map<string, Array<(reply: string) => void>>()
 const turnListeners = new Set<(key: string, done: TurnDone) => void>()
 
@@ -182,6 +193,11 @@ function onEvent(e: CliEvent): void {
   live.set(key, l)
   const roster = useRoster.getState()
   roster.patch(key, rosterPatch(l))
+  // The workspace card's activity rollup, as a chat pane feeds it.
+  if ((prev?.busy ?? false) !== l.busy) {
+    const ws = workspaceOfPane(key)
+    if (ws) useWorkspaceStatus.getState().setPane(ws, key, { busy: l.busy })
+  }
 
   if (e.kind === 'question' || e.kind === 'permission') {
     mirrorCard(e)
@@ -191,6 +207,8 @@ function onEvent(e: CliEvent): void {
     dropMirror(e.id)
   } else if (e.kind === 'state') {
     mirrorMenu(key, l)
+    for (const f of finishedTasks(prev?.background ?? [], l.background))
+      reportTaskFinished({ chatKey: key, label: f.label, outcome: bgTaskOutcome(f.status, f.label) })
     if (l.menu && !prev?.menu) notifyWaiting(key)
     const status = getAgentStatus(key)
     if (l.busy && !l.waiting && !l.menu) {
@@ -228,6 +246,8 @@ export function startCliChats(): () => void {
 
 /** A pane closed: forget what was known about it. */
 export function dropCliChat(key: string): void {
+  const ws = workspaceOfPane(key)
+  if (ws) useWorkspaceStatus.getState().clearPane(ws, key)
   live.delete(key)
   waiters.delete(key)
   dropAllMirrors(key)
@@ -268,8 +288,13 @@ export function registerCliChatAgent(h: CliAgentHooks): () => void {
     },
     send: h.send,
     attach: h.attach,
-    // The CLI has no "notice" turn: the answer comes back as a message.
-    wake: (text) => h.send(text),
+    // The CLI has no "notice" turn: the answer goes in as a message, which
+    // the chat view draws as the notices (wakeNotices, lib/wake).
+    wake: (text, notices) => {
+      wakes.set(wakeKey(text), notices)
+      if (wakes.size > 50) wakes.delete(wakes.keys().next().value as string)
+      h.send(text)
+    },
     waitNext: () => waitTurn(key),
     ask: (message) => {
       const answer = waitTurn(key)

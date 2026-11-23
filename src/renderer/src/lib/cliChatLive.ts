@@ -193,3 +193,24 @@ export function notifyBody(reply: string, fallback: string): string {
   if (!s) return fallback
   return s.length > 160 ? s.slice(0, 160) + '…' : s
 }
+
+/**
+ * Background tasks that ended between two reports of the list (the Stop
+ * hook's background_tasks): gone from it, or no longer running. What a
+ * phone is told ("task finished"), the way the chat pane reports it.
+ */
+export function finishedTasks(
+  prev: CliLive['background'],
+  next: CliLive['background']
+): Array<{ id: string; label: string; status: string }> {
+  const running = (s?: string): boolean => !s || s === 'running' || s === 'pending'
+  const now = new Map(next.map((b) => [b.id, b]))
+  const out: Array<{ id: string; label: string; status: string }> = []
+  for (const b of prev) {
+    if (!running(b.status)) continue
+    const after = now.get(b.id)
+    if (after && running(after.status)) continue
+    out.push({ id: b.id, label: b.description || b.type || b.id, status: after?.status ?? 'completed' })
+  }
+  return out
+}

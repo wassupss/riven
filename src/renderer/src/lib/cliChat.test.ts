@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildTurns,
+  canSendQueued,
+  lineDiff,
+  toolCode,
   compose,
   initialModel,
   isImagePath,
@@ -208,5 +211,32 @@ describe('header, questions, agents', () => {
     expect(m.agents.toolu_1.tools).toBe(1)
     m = reduce(m, { key: K, kind: 'meta', title: 'Image color question' })
     expect(m.title).toBe('Image color question')
+  })
+})
+
+describe('tool code', () => {
+  it('diffs an edit by lines', () => {
+    expect(lineDiff('a\nb\nc', 'a\nx\nc')).toBe(' a\n-b\n+x\n c')
+    expect(lineDiff('', 'x')).toBe('+x')
+  })
+  it('picks what a tool row shows', () => {
+    expect(toolCode('Edit', { file_path: '/a', old_string: 'x', new_string: 'y' })).toEqual({ code: '-x\n+y', diff: true, path: '/a' })
+    expect(toolCode('Bash', { command: 'ls' })).toEqual({ code: 'ls', diff: false, path: null })
+    expect(toolCode('MultiEdit', { file_path: '/a', edits: [{ old_string: 'a', new_string: 'b' }] })?.code).toBe('-a\n+b')
+    expect(toolCode('Read', { file_path: '/a' })).toBeNull()
+  })
+})
+
+describe('queue', () => {
+  const idle = initialModel().state
+  it('sends the next queued message only into a free CLI', () => {
+    expect(canSendQueued({ ...idle, ready: true })).toBe(true)
+    expect(canSendQueued({ ...idle, ready: true, busy: true })).toBe(false)
+    expect(canSendQueued({ ...idle, ready: true, waiting: true })).toBe(false)
+    expect(canSendQueued({ ...idle, ready: true, menu: { title: '', options: [], selected: 0 } })).toBe(false)
+    expect(canSendQueued({ ...idle, ready: false })).toBe(false)
+    expect(canSendQueued({ ...idle, parked: true })).toBe(true)
+    expect(canSendQueued({ ...idle, ready: true, dead: true })).toBe(false)
+    expect(canSendQueued({ ...idle, ready: true, terminal: true })).toBe(false)
   })
 })

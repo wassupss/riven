@@ -3,11 +3,14 @@ import { GitBranch, History, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useT, type TFn } from '../../../i18n'
 import { getSettings } from '../../../state/settings'
 
-// Past conversations of this workspace, from the CLI's own transcripts (the
-// same list the chat pane's /resume shows): resume one, resume a copy
-// (--fork-session), rename, delete, or start a new one. The conversation
-// running in the pane is renamed through the CLI itself (/rename), so the
-// CLI's later copy of the title cannot undo it.
+// Past conversations of this workspace, from the CLI's own files (Claude
+// Code's transcripts, or Codex's rollouts started in this folder): resume
+// one, resume a copy (fork), rename, delete, or start a new one. The
+// conversation running in the pane is renamed through the CLI itself
+// (/rename), so the CLI's later copy of the title cannot undo it. Codex has
+// no way to name a conversation that is not running (its /rename is the
+// only one), so its past rows are not renamed here; a delete is Codex's own
+// `codex delete`.
 
 interface Row {
   id: string
@@ -26,6 +29,7 @@ function ago(ts: number, t: TFn): string {
 
 export default function SessionPicker({
   chatKey,
+  cli = 'claude',
   cwd,
   configDir,
   current,
@@ -34,6 +38,7 @@ export default function SessionPicker({
   onClose
 }: {
   chatKey: string
+  cli?: 'claude' | 'codex'
   cwd: string
   configDir?: string
   current: string | null
@@ -45,10 +50,12 @@ export default function SessionPicker({
   const [rows, setRows] = useState<Row[] | null>(null)
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const codex = cli === 'codex'
   const reload = (): void => {
-    void window.api.chat.sessions(cwd, configDir).then(setRows)
+    void (codex ? window.api.chat.codexSessions(cwd) : window.api.chat.sessions(cwd, configDir)).then(setRows)
   }
-  useEffect(reload, [cwd, configDir])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(reload, [cwd, configDir, cli])
 
   const commitRename = async (id: string): Promise<void> => {
     const name = draft.trim()
@@ -63,7 +70,7 @@ export default function SessionPicker({
   const remove = async (r: Row): Promise<void> => {
     if (getSettings().confirmDeleteSession && !window.confirm(t('chat.sessionDeleteConfirm', { title: r.title }))) return
     setRows((prev) => prev?.filter((x) => x.id !== r.id) ?? prev)
-    await window.api.chat.sessionDelete(cwd, r.id, configDir)
+    await (codex ? window.api.chat.codexSessionDelete(r.id) : window.api.chat.sessionDelete(cwd, r.id, configDir))
     reload()
   }
 
@@ -123,16 +130,18 @@ export default function SessionPicker({
                   <button className="picker-act" title={t('chat.sessionFork')} onClick={() => onOpen(r.id, true)}>
                     <GitBranch size={12} />
                   </button>
-                  <button
-                    className="picker-act"
-                    title={t('chat.sessionRename')}
-                    onClick={() => {
-                      setDraft(r.title.replace(/…$/, ''))
-                      setEditing(r.id)
-                    }}
-                  >
-                    <Pencil size={12} />
-                  </button>
+                  {(!codex || r.id === current) && (
+                    <button
+                      className="picker-act"
+                      title={t('chat.sessionRename')}
+                      onClick={() => {
+                        setDraft(r.title.replace(/…$/, ''))
+                        setEditing(r.id)
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                  )}
                   {r.id !== current && (
                     <button className="picker-act danger" title={t('chat.sessionDelete')} onClick={() => void remove(r)}>
                       <Trash2 size={12} />

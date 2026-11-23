@@ -46,8 +46,6 @@ import {
 import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../state/roster'
 import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
-import { useJobs, nextRunOf } from '../../state/jobs'
-import { type Trigger } from '../../lib/schedule'
 import { ensureEditor, addTerminal, setDelegator, hasInitialText, takeInitialText, getActiveApi } from '../registry'
 import { promptInput } from '../../components/promptInput'
 import { useUI } from '../../state/ui'
@@ -63,6 +61,13 @@ import ModelOptions from '../../components/ModelOptions'
 import { retryLabel, limitLabel, compactLabel } from '../../lib/agentNotice'
 import { viewImage } from '../../components/ImageLightbox'
 import { scrollWithin } from '../../lib/scrollWithin'
+import { mentionHandle, mentionQuery, mentionMatches as matchMentions, insertMention, dropMentionQuery, parseMentions } from '../../lib/mention'
+import { CardSkeleton, McpCard, ModelCard, useCardNav } from './chatkit/Cards'
+import { DEFAULT_SLASH, NATIVE_SLASH, SLASH_DESC } from './chatkit/slash'
+import ScheduleControl from './chatkit/Schedule'
+import { QueueStrip, WorkStrip, useTicker } from './chatkit/Strips'
+import { fmtDur } from './chatkit/format'
+import { ChatCode, CopyBtn, isEditName } from './chatkit/Code'
 
 // An image waiting in the composer to go with the next message.
 export interface ChatImage {
@@ -237,12 +242,6 @@ function RelTime({ ts }: { ts: number }): JSX.Element {
   const t = useT()
   return <>{fmtRelative(ts, useMinuteClock(), t)}</>
 }
-const fmtDur = (ms: number): string => {
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}초`
-  const m = Math.floor(s / 60)
-  return s % 60 ? `${m}분 ${s % 60}초` : `${m}분`
-}
 // Korean action verb per tool (native ToolGroup.verb) for the running header.
 const TOOL_VERB: Record<string, string> = {
   Read: 'chat.tools.read',
@@ -291,131 +290,6 @@ function ToolIcon({ name }: { name: string }): JSX.Element {
   return <Icon size={12} />
 }
 
-const isEditName = (n: string): boolean => n === 'Edit' || n === 'MultiEdit'
-
-// Lightweight, language-agnostic syntax highlighting (native ChatText.highlight):
-// comments dim, strings green, numbers amber, keywords accent — a single regex
-// pass, not a full grammar. Big blocks skip it (perf, like native's 2500 cap).
-const HL_KW =
-  'func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo'
-const HL_RE = new RegExp(
-  '(\\/\\/[^\\n]*|#[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/)' + // comments
-    '|("(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'|`[^`]*`)' + // strings
-    '|(\\b\\d[\\d_.eExXa-fA-F]*\\b)' + // numbers
-    '|(\\b(?:' + HL_KW + ')\\b)', // keywords
-  'g'
-)
-function hl(code: string): ReactNode[] {
-  if (code.length > 2500) return [code]
-  const out: ReactNode[] = []
-  let last = 0
-  let k = 0
-  let m: RegExpExecArray | null
-  HL_RE.lastIndex = 0
-  while ((m = HL_RE.exec(code)) !== null) {
-    if (m[0].length === 0) {
-      HL_RE.lastIndex++
-      continue
-    }
-    if (m.index > last) out.push(code.slice(last, m.index))
-    const cls = m[1] ? 'tok-c' : m[2] ? 'tok-s' : m[3] ? 'tok-n' : 'tok-k'
-    out.push(
-      <span key={k++} className={cls}>
-        {m[0]}
-      </span>
-    )
-    last = m.index + m[0].length
-  }
-  if (last < code.length) out.push(code.slice(last))
-  return out
-}
-
-// Copy-to-clipboard icon button (native copyButton): flips to a check for 1.2s.
-function CopyBtn({ code, title }: { code: string; title?: string }): JSX.Element {
-  const t = useT()
-  const [done, setDone] = useState(false)
-  return (
-    <button
-      className={`chat-code-btn${done ? ' ok' : ''}`}
-      title={title ?? t('chat.copy')}
-      onClick={() => {
-        void navigator.clipboard.writeText(code)
-        setDone(true)
-        setTimeout(() => setDone(false), 1200)
-      }}
-    >
-      {done ? <Check size={12} /> : <Copy size={12} />}
-    </button>
-  )
-}
-
-// Expandable code / diff body for a tool line, matching native ChatText.codeBlock:
-// - short single-line non-diff commands render as a compact one-line lozenge;
-// - everything else is a card: header (lang label + copy / "변경 보기") over a
-//   syntax-highlighted body (or +/- diff bands for Edit).
-function ChatCode({
-  code,
-  diff,
-  path
-}: {
-  code: string
-  diff: boolean
-  path?: string | null
-}): JSX.Element {
-  const t = useT()
-  const openFile = useSession((s) => s.openFile)
-  const oneLiner = !code.includes('\n') && code.length <= 110 && !diff
-  if (oneLiner) {
-    return (
-      <div className="chat-code-compact">
-        <code className="chat-code-compact-text">{hl(code)}</code>
-        <CopyBtn code={code} />
-      </div>
-    )
-  }
-  const isEdit = diff && !!path
-  return (
-    <div className="chat-code-card">
-      <div className="chat-code-head">
-        <span className="chat-code-lang">{diff ? 'diff' : ''}</span>
-        {isEdit ? (
-          <button
-            className="chat-code-viewdiff"
-            onClick={() => {
-              openFile(path as string)
-              ensureEditor()
-            }}
-          >
-            {t('chat.viewDiff')}
-          </button>
-        ) : (
-          <CopyBtn code={code} />
-        )}
-      </div>
-      {diff ? (
-        <div className="chat-code-body diff">
-          {code.split('\n').map((line, i) => {
-            const add = line[0] === '+'
-            const del = line[0] === '-'
-            const content = add || del ? line.slice(1) : line
-            const cls = add ? ' add' : del ? ' del' : ''
-            const sign = add ? '+ ' : del ? '- ' : '  '
-            return (
-              <div key={i} className={`chat-code-line${cls}`}>
-                <span className="sign">{sign}</span>
-                {content ? hl(content) : ' '}
-              </div>
-            )
-          })}
-        </div>
-      ) : (
-        <pre className="chat-code-body">
-          <code>{hl(code)}</code>
-        </pre>
-      )}
-    </div>
-  )
-}
 
 // Below this a duration is noise: almost every call takes a second or two.
 const SLOW_TOOL_MS = 10_000
@@ -434,17 +308,6 @@ function runningFor(tl: ToolLine, now: number): number {
   if (tl.done) return 0
   const ms = tl.startedAt ? now - tl.startedAt : (tl.elapsed ?? 0) * 1000
   return ms >= SLOW_TOOL_MS ? ms : 0
-}
-
-// A second-resolution clock, running only while something needs it.
-function useTicker(on: boolean): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!on) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [on])
-  return now
 }
 
 // Consecutive tool calls in a turn, collapsed into one accordion (like native
@@ -681,53 +544,6 @@ function NoticeIcon({ notice }: { notice: MsgNotice }): JSX.Element {
   return <Scissors size={12} />
 }
 
-// A command the agent left running in the background. It outlives the turn that
-// started it, so it gets its own row above the composer with its own clock —
-// the same question a long tool raises ("is this still going?") deserves the
-// same answer here.
-// Work this pane handed to another agent without waiting (riven_ask_agent
-// wait=false). Same row as a background command: it is the same situation —
-// something is still going on that this conversation will hear back from.
-function DelegationChip({ d }: { d: Delegation }): JSX.Element {
-  const t = useT()
-  const now = useTicker(true)
-  return (
-    <div className="chat-bgtask chat-delegation" title={t('chat.delegationHint', { what: d.toTitle })}>
-      <span className="chat-bgtask-dot" />
-      <Forward size={11} />
-      <span className="chat-bgtask-state">{t('chat.bgTaskRunning')}</span>
-      <span className="chat-bgtask-label">
-        {t('chat.delegating')} · {d.toTitle}
-      </span>
-      <span className="chat-bgtask-time">{fmtDur(now - d.startedAt)}</span>
-    </div>
-  )
-}
-
-function BgTaskChip({
-  task,
-  since
-}: {
-  task: { id: string; label: string }
-  since?: number
-}): JSX.Element {
-  const t = useT()
-  const now = useTicker(true)
-  return (
-    // The STATE is said in words, not implied by a dot. As a name and an icon
-    // alone this read as a label — a badge on the conversation rather than
-    // something that is happening — and the turn above it says 완료, so there
-    // was nothing on screen to say work was still going.
-    <div className="chat-bgtask" title={t('chat.bgTaskHint', { what: task.label })}>
-      <span className="chat-bgtask-dot" />
-      <TerminalSquare size={11} />
-      <span className="chat-bgtask-state">{t('chat.bgTaskRunning')}</span>
-      <span className="chat-bgtask-label">{task.label || t('chat.bgTaskPlain')}</span>
-      {since && <span className="chat-bgtask-time">{fmtDur(now - since)}</span>}
-    </div>
-  )
-}
-
 function CompactingBar({ since }: { since: number }): JSX.Element {
   const t = useT()
   const [, tick] = useState(0)
@@ -906,377 +722,6 @@ const ChatMessage = memo(function ChatMessage({
   )
 })
 
-// Descriptions for the built-in slash commands (Claude Code's own set). The live
-// list comes from the session's init `slash_commands`; this only labels the ones
-// we recognise — unknown entries (user skills / MCP prompts) show name-only.
-const SLASH_DESC: Record<string, { ko: string; en: string }> = {
-  clear: { ko: '새 대화 시작 (컨텍스트 비우기)', en: 'Start a new conversation (clear context)' },
-  compact: { ko: '대화를 요약해 컨텍스트 확보', en: 'Summarize the conversation to free context' },
-  context: { ko: '컨텍스트 사용량 보기', en: 'Show context usage' },
-  usage: { ko: '토큰 사용량·비용', en: 'Token usage and cost' },
-  model: { ko: '모델 변경', en: 'Switch the model' },
-  config: { ko: '설정 열기', en: 'Open settings' },
-  resume: { ko: '이전 세션 불러오기', en: 'Resume a previous session' },
-  mcp: { ko: 'MCP 서버 상태·연결 관리', en: 'MCP servers: status & connections' },
-  agents: { ko: '서브에이전트 관리', en: 'Manage subagents' },
-  'list-agents': { ko: '에이전트·세션 목록', en: 'List agents and sessions' },
-  init: { ko: 'CLAUDE.md 생성', en: 'Create a CLAUDE.md' },
-  'code-review': { ko: '변경/PR 코드 리뷰', en: 'Review a diff or PR' },
-  'security-review': { ko: '보안 취약점 검사', en: 'Security vulnerability review' },
-  verify: { ko: '변경 검증', en: 'Verify changes' },
-  doctor: { ko: '설치 점검·진단', en: 'Diagnose the setup' },
-  insights: { ko: '최근 세션 분석 리포트', en: 'Analyze recent sessions' },
-  recap: { ko: '대화 요약', en: 'Recap the conversation' },
-  'deep-research': { ko: '웹 리서치·교차검증', en: 'Fan out web research' },
-  memory: { ko: 'CLAUDE.md·메모리 편집', en: 'Edit CLAUDE.md and memory' },
-  review: { ko: '코드 리뷰', en: 'Review code' },
-  batch: { ko: '대규모 변경 오케스트레이션', en: 'Orchestrate large-scale changes' },
-  loop: { ko: '프롬프트 반복 실행', en: 'Run a prompt on a loop' },
-  design: { ko: 'UI 목업·화면 설계', en: 'Draft UI mockups' },
-  dataviz: { ko: '차트·대시보드 설계', en: 'Design charts and dashboards' }
-}
-
-// The CLI only emits its real `slash_commands` after the first message (stream-
-// json waits for input before init), so a fresh pane seeds the menu with the
-// actual headless built-ins and swaps to the exact session list (which adds
-// skills / MCP prompts) once init arrives. These names are verified present in a
-// headless session — commands that need an interactive terminal are excluded.
-const DEFAULT_SLASH = [
-  'clear', 'compact', 'context', 'usage', 'model', 'agents',
-  'list-agents', 'init', 'code-review', 'security-review', 'verify', 'doctor',
-  'insights', 'recap', 'deep-research'
-]
-// Commands riven handles with its OWN native UI (the CLI's versions are
-// interactive-terminal-only, so forwarding them headless does nothing). These are
-// always offered and take precedence over any same-named CLI command.
-const NATIVE_SLASH = ['resume', 'mcp', 'model', 'config'] as const
-
-interface McpRow {
-  name: string
-  url: string
-  status: 'connected' | 'needs-auth' | 'pending' | 'other'
-}
-// `custom` = a server the user configured themselves (user/project/local scope,
-// i.e. what `claude mcp add` writes). Everything else — claude.ai connectors and
-// plugin-provided servers — riven did not get told about and cannot rewrite, so
-// the card keeps the two apart instead of implying they are the same thing.
-interface McpSrv extends McpRow {
-  origin: 'custom' | 'managed'
-}
-
-// Keyboard nav for inline command cards: ↑/↓ move, Enter confirms, Esc dismisses.
-// The card container autofocuses so keys work right after "/command" — no click.
-function useCardNav(
-  count: number,
-  onEnter: (i: number) => void,
-  onDismiss: () => void
-): {
-  index: number
-  setIndex: (i: number) => void
-  ref: React.RefObject<HTMLDivElement>
-  onKeyDown: (e: React.KeyboardEvent) => void
-} {
-  const [index, setIndex] = useState(0)
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    ref.current?.focus({ preventScroll: true })
-  }, [])
-  const clamped = count > 0 ? Math.min(index, count - 1) : 0
-  const onKeyDown = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      onDismiss()
-      return
-    }
-    if (count === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setIndex((clamped + 1) % count)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setIndex((clamped - 1 + count) % count)
-    } else if (e.key === 'Enter') {
-      e.preventDefault()
-      onEnter(clamped)
-    }
-  }
-  return { index: clamped, setIndex, ref, onKeyDown }
-}
-
-function CardSkeleton(): JSX.Element {
-  return (
-    <div className="card-skeleton">
-      <span />
-      <span />
-      <span />
-    </div>
-  )
-}
-
-// Quote a value for the shell so server names with spaces ("claude.ai Notion")
-// and URLs with query strings survive the terminal command we build below.
-function shq(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`
-}
-
-function mcpStatus(raw: string): McpSrv['status'] {
-  if (/^connected$/i.test(raw)) return 'connected'
-  if (/needs?[-_ ]?auth/i.test(raw)) return 'needs-auth'
-  if (/pending/i.test(raw)) return 'pending'
-  return 'other'
-}
-
-// `claude mcp list` and a real session DISAGREE, and the session is the one that
-// matters: list reports a claude.ai connector as connected from stored
-// credentials that the session then rejects as needs-auth, and it omits some
-// connectors and every plugin-provided server. So take the set and the status
-// from the session, and use list only for the URL it alone knows.
-function mergeMcp(rows: McpRow[], session: Array<{ name: string; status: string }>): McpSrv[] {
-  const urls = new Map(rows.map((r) => [r.name, r.url]))
-  // `mcp list` reports the user's own servers AND the claude.ai connectors; only
-  // the former are theirs to edit, and only they can be named apart this way.
-  const configured = new Set(rows.filter((r) => !/^claude\.ai /i.test(r.name)).map((r) => r.name))
-  const origin = (name: string): McpSrv['origin'] => (configured.has(name) ? 'custom' : 'managed')
-  const merged: McpSrv[] = session.map((s) => ({
-    name: s.name,
-    url: urls.get(s.name) ?? '',
-    status: mcpStatus(s.status),
-    origin: origin(s.name)
-  }))
-  const seen = new Set(merged.map((s) => s.name))
-  // Locally configured servers a probe session did not report still belong here.
-  for (const r of rows) if (!seen.has(r.name)) merged.push({ ...r, origin: origin(r.name) })
-  // The user's own servers first — that is the half they can act on.
-  return [
-    ...merged.filter((s) => s.origin === 'custom'),
-    ...merged.filter((s) => s.origin === 'managed')
-  ]
-}
-
-// Inline /mcp card: real server status from `claude mcp list`, rendered in the
-// transcript (not a modal) and keyboard-navigable.
-//
-// Auth and add run in a REAL terminal, never a hidden spawn. `claude mcp login`
-// is interactive by construction (it can ask you to press a key or to paste a
-// code back), and `claude mcp add` reports whether it took on stdout — with
-// stdin ignored and nothing on screen both silently do nothing, which is what
-// made the buttons look dead. So we do what the account sign-in does: open a
-// terminal running the command, then poll `mcp list` until the result lands and
-// bring it back here.
-function McpCard({
-  cwd,
-  configDir,
-  onDismiss
-}: {
-  cwd: string
-  configDir?: string
-  onDismiss: () => void
-}): JSX.Element {
-  const t = useT()
-  const [servers, setServers] = useState<McpSrv[] | null>(null)
-  const [busyName, setBusyName] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  // Anything async here reports back INTO this card, so it has to die with it —
-  // otherwise dismissing the card mid-login leaves a `claude mcp list` firing
-  // every 2s for the rest of the window.
-  const alive = useRef(true)
-  useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-    }
-  }, [])
-  const session = useRef<Array<{ name: string; status: string }>>([])
-  // TWO steps on purpose. The session probe is a real CLI session — ~7s once
-  // plugins are in play — and holding the card on a skeleton for that long
-  // reads as a hang. So paint `mcp list` the moment it lands, then upgrade to
-  // the session's own answer when it arrives. Both are caught: a rejected IPC
-  // must not leave the card stuck loading forever.
-  const load = useCallback(
-    async (fresh = false): Promise<void> => {
-      setServers(null)
-      const rows = await window.api.chat.mcpList(cwd, configDir).catch(() => [])
-      if (!alive.current) return
-      setServers(mergeMcp(rows, session.current))
-      const info = await window.api.chat.mcpSession(cwd, configDir, fresh).catch(() => [])
-      if (!alive.current) return
-      session.current = info
-      setServers(mergeMcp(rows, info))
-    },
-    [cwd, configDir]
-  )
-  useEffect(() => void load(), [load])
-  // Poll `mcp list` until the terminal's command has actually landed, then bring
-  // the answer back here. ~3 minutes, a slow but realistic browser flow; each
-  // check is one short `claude mcp list` and the loop stops the moment `done`
-  // says the state changed, so the card reports the result instead of leaving
-  // the user to guess whether the redirect worked.
-  const watch = async (name: string, done: (s?: McpRow) => boolean): Promise<void> => {
-    for (let i = 0; i < 90; i++) {
-      await new Promise((r) => setTimeout(r, 2000))
-      if (!alive.current) return
-      const rows = await window.api.chat.mcpList(cwd, configDir).catch(() => [])
-      if (!alive.current) return
-      if (done(rows.find((r) => r.name === name))) break
-    }
-    setBusyName(null)
-    await load(true)
-  }
-  // Run `claude mcp …` in a REAL terminal, then watch for the result. The
-  // command is interactive by construction, and the terminal is also where its
-  // errors are legible — so nothing is reported here that the panel does not
-  // already show better.
-  const run = (command: string, label: string, done: (s?: McpRow) => boolean): Promise<void> => {
-    setBusyName(label)
-    setError(null)
-    // The pane's profile has to carry into the terminal, or the login lands in a
-    // DIFFERENT config dir than the one this chat runs under.
-    addTerminal(configDir ? `CLAUDE_CONFIG_DIR=${shq(configDir)} ${command}` : command)
-    return watch(label, done)
-  }
-  const login = (name: string): Promise<void> =>
-    run(`claude mcp login ${shq(name)}`, name, (s) => s?.status === 'connected')
-  // Approving a .mcp.json server is a stored decision, not a conversation, so it
-  // stays here: riven writes the record the CLI would only take interactively.
-  const approve = async (name: string): Promise<void> => {
-    setBusyName(name)
-    setError(null)
-    const r = await window.api.chat
-      .mcpApprove(cwd, name, configDir)
-      .catch((e: unknown) => ({ ok: false, output: String(e) }))
-    if (!alive.current) return
-    setBusyName(null)
-    if (!r.ok) setError(r.output)
-    await load(true)
-  }
-  const add = async (): Promise<void> => {
-    const name = (await promptInput({ title: t('chat.mcpAddName'), placeholder: 'sentry' }))?.trim()
-    if (!name) return
-    const target = (
-      await promptInput({
-        title: t('chat.mcpAddTarget'),
-        placeholder: 'https://mcp.sentry.dev/mcp'
-      })
-    )?.trim()
-    if (!target) return
-    // Server setup pages hand out a ready-made `claude mcp add …` line, and that
-    // is what gets pasted here. Treating it as a stdio command wrapped it in a
-    // SECOND add — `claude mcp add <name> -- claude mcp add --transport http …` —
-    // which registers a "server" whose command is the add line itself: it cannot
-    // speak MCP, so its tools silently never load (and the bearer token lands in
-    // the config as a plain argv entry). A pasted add line is run as-is instead.
-    const pastedAdd = /^claude\s+mcp\s+add(\s|$)/i.test(target)
-    // A URL is an HTTP server; anything else is the stdio command to run.
-    const command = pastedAdd
-      ? target
-      : /^https?:\/\//i.test(target)
-        ? `claude mcp add --transport http ${shq(name)} ${shq(target)}`
-        : `claude mcp add ${shq(name)} -- ${target}`
-    // `add` is done the moment the server exists at all — its status afterwards
-    // is a separate question the card answers on the next row.
-    await run(command, name, (s) => !!s)
-  }
-  const logout = async (name: string): Promise<void> => {
-    setBusyName(name)
-    await window.api.chat.mcpLogout(cwd, name, configDir)
-    setBusyName(null)
-    await load(true)
-  }
-  const list = servers ?? []
-  // Nav rows = servers, then the two footer actions.
-  const count = servers ? list.length + 2 : 0
-  const enter = (i: number): void => {
-    if (i < list.length) {
-      const s = list[i]
-      if (s.status === 'connected') void logout(s.name)
-      else if (s.status === 'pending') void approve(s.name)
-      else void login(s.name)
-    } else if (i === list.length) useUI.getState().openSettings('ai')
-    else void add()
-  }
-  const { index, setIndex, ref, onKeyDown } = useCardNav(count, enter, onDismiss)
-  useEffect(() => {
-    if (servers) scrollWithin(ref.current, 'end')
-  }, [servers, ref])
-
-  return (
-    <div className="chat-card" tabIndex={0} ref={ref} onKeyDown={onKeyDown}>
-      <div className="chat-card-head">
-        <Server size={14} />
-        <span>{t('chat.mcpTitle')}</span>
-        <button
-          className="chat-card-refresh"
-          title={t('common.refresh')}
-          onClick={() => void load(true)}
-        >
-          <RotateCw size={12} />
-        </button>
-      </div>
-      {servers === null ? (
-        <CardSkeleton />
-      ) : list.length === 0 ? (
-        <div className="set-note">{t('chat.mcpEmpty')}</div>
-      ) : (
-        list.map((s, i) => (
-          <div key={s.name}>
-            {/* The list is sorted by origin, so a change of origin starts a group. */}
-            {(i === 0 || list[i - 1].origin !== s.origin) && (
-              <div className="mcp-group">
-                {t(s.origin === 'custom' ? 'chat.mcpGroupCustom' : 'chat.mcpGroupManaged')}
-              </div>
-            )}
-            <div
-              className={`mcp-item${index === i ? ' active' : ''}`}
-              onMouseMove={() => index !== i && setIndex(i)}
-            >
-              <span className={`mcp-dot ${s.status}`} />
-              <span className="mcp-name" title={s.url}>
-                {s.name}
-              </span>
-              {busyName === s.name ? (
-                <span className="mcp-status">
-                  <Loader2 size={12} className="spin" />
-                </span>
-              ) : s.status === 'connected' ? (
-                <button className="btn-small" onClick={() => void logout(s.name)}>
-                  {t('chat.mcpLogout')}
-                </button>
-              ) : s.status === 'pending' ? (
-                <button className="btn-small" onClick={() => void approve(s.name)}>
-                  {t('chat.mcpApprove')}
-                </button>
-              ) : (
-                <button className="btn-small" onClick={() => void login(s.name)}>
-                  {t('chat.mcpLoginBtn')}
-                </button>
-              )}
-            </div>
-          </div>
-        ))
-      )}
-      <div className="mcp-actions">
-        <button
-          className={`btn-small${servers && index === list.length ? ' active' : ''}`}
-          onMouseMove={() => setIndex(list.length)}
-          onClick={() => useUI.getState().openSettings('ai')}
-        >
-          {t('chat.mcpRivenTools')}
-        </button>
-        <button
-          className={`btn-small${servers && index === list.length + 1 ? ' active' : ''}`}
-          onMouseMove={() => setIndex(list.length + 1)}
-          onClick={() => void add()}
-        >
-          {t('chat.mcpAdd')}
-        </button>
-      </div>
-      <div className={error ? 'set-note mcp-error' : 'set-note'}>
-        {error || t('chat.mcpAuthNote')}
-      </div>
-    </div>
-  )
-}
-
 // Inline /resume card: past sessions for this cwd; pick one to load it in place.
 // Keyboard-navigable (↑/↓/Enter), Esc dismisses.
 function ResumeCard({
@@ -1420,158 +865,6 @@ function ResumeCard({
   )
 }
 
-// Inline /model card: pick the model with the keyboard (↑/↓/Enter), Esc cancels.
-function ModelCard({
-  models,
-  label,
-  current,
-  onPick,
-  onDismiss
-}: {
-  models: string[]
-  label: (m: string) => string
-  current: string
-  onPick: (m: string) => void
-  onDismiss: () => void
-}): JSX.Element {
-  const t = useT()
-  const start = Math.max(0, models.indexOf(current))
-  const { index, setIndex, ref, onKeyDown } = useCardNav(
-    models.length,
-    (i) => onPick(models[i]),
-    onDismiss
-  )
-  useEffect(() => {
-    setIndex(start)
-    scrollWithin(ref.current, 'end')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  return (
-    <div className="chat-card" tabIndex={0} ref={ref} onKeyDown={onKeyDown}>
-      <div className="chat-card-head">
-        <Bot size={14} />
-        <span>{t('chat.modelTitle')}</span>
-      </div>
-      {models.map((m, i) => (
-        <button
-          key={m}
-          className={`picker-item model-row${index === i ? ' active' : ''}`}
-          onMouseMove={() => index !== i && setIndex(i)}
-          onClick={() => onPick(m)}
-        >
-          <span className="picker-title">{label(m)}</span>
-          {m === current && <Check size={13} className="model-check" />}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-// Popover to schedule the composed message: quick delays, an exact time, a repeat
-// option, and the list of this pane's pending schedules (with cancel).
-/** The popover's own vocabulary for how often — a Job trigger is built from it. */
-type Repeat = 'none' | 'hourly' | 'daily'
-
-function SchedulePopover({
-  hasText,
-  repeat,
-  setRepeat,
-  onSchedule,
-  pending,
-  onCancel,
-  onClose
-}: {
-  hasText: boolean
-  repeat: Repeat
-  setRepeat: (r: Repeat) => void
-  onSchedule: (fireAt: number) => void
-  pending: Array<{ id: string; text: string; fireAt: number; repeat: Repeat }>
-  onCancel: (id: string) => void
-  onClose: () => void
-}): JSX.Element {
-  const t = useT()
-  const presets: Array<[string, number]> = [
-    [t('chat.schedule.p5m'), 5 * 60_000],
-    [t('chat.schedule.p15m'), 15 * 60_000],
-    [t('chat.schedule.p30m'), 30 * 60_000],
-    [t('chat.schedule.p1h'), 60 * 60_000],
-    [t('chat.schedule.p3h'), 180 * 60_000]
-  ]
-  const [dt, setDt] = useState('')
-  const fmt = (ms: number): string =>
-    new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-  const repeatTag = (r: Repeat): string =>
-    r === 'hourly' ? ' · ' + t('chat.schedule.hourly') : r === 'daily' ? ' · ' + t('chat.schedule.daily') : ''
-  return (
-    <div className="chat-sched-pop">
-      <div className="chat-sched-head">
-        <span>{t('chat.schedule.title')}</span>
-        <button className="chat-sched-x" onClick={onClose}>
-          <XIcon size={12} />
-        </button>
-      </div>
-      <div className="chat-sched-repeat">
-        {(['none', 'hourly', 'daily'] as Repeat[]).map((r) => (
-          <button
-            key={r}
-            className={`chat-sched-rep${repeat === r ? ' on' : ''}`}
-            onClick={() => setRepeat(r)}
-          >
-            {r === 'none' ? t('chat.schedule.once') : r === 'hourly' ? t('chat.schedule.hourly') : t('chat.schedule.daily')}
-          </button>
-        ))}
-      </div>
-      {hasText ? (
-        <>
-          <div className="chat-sched-presets">
-            {presets.map(([label, ms]) => (
-              <button key={label} className="chat-sched-preset" onClick={() => onSchedule(Date.now() + ms)}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="chat-sched-exact">
-            <input
-              type="datetime-local"
-              className="ui-input"
-              value={dt}
-              onChange={(e) => setDt(e.target.value)}
-            />
-            <button
-              className="ui-btn ui-btn-primary"
-              disabled={!dt}
-              onClick={() => {
-                const ms = new Date(dt).getTime()
-                if (Number.isFinite(ms)) onSchedule(ms)
-              }}
-            >
-              {t('chat.schedule.set')}
-            </button>
-          </div>
-        </>
-      ) : (
-        <div className="chat-sched-empty">{t('chat.schedule.needText')}</div>
-      )}
-      {pending.length > 0 && (
-        <div className="chat-sched-list">
-          {pending.map((s) => (
-            <div key={s.id} className="chat-sched-item">
-              <span className="chat-sched-when">
-                {fmt(s.fireAt)}
-                {repeatTag(s.repeat)}
-              </span>
-              <span className="chat-sched-text">{s.text}</span>
-              <button className="chat-sched-x" onClick={() => onCancel(s.id)}>
-                <XIcon size={11} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // Rebuild the visible transcript from a CLI session file. Everything here already
 // finished, so tools MUST be marked done — otherwise the restored view shows every
 // tool as still running (the group's state is derived from its tools).
@@ -1612,12 +905,6 @@ function blankAssistant(): Msg {
     tokensIn: 0,
     tokensOut: 0
   }
-}
-
-// A teammate's @mention handle: the name only, dropping the " · group" suffix that
-// group-member panes carry in their title.
-function mentionHandle(title: string): string {
-  return (title.split(' · ')[0] || title).trim()
 }
 
 export default function ChatPanel({
@@ -1795,9 +1082,6 @@ export default function ChatPanel({
   // delegates that message to the named agent (native chat parity).
   const [mentionIndex, setMentionIndex] = useState(0)
   // Scheduled messages (명령 예약): pick a time to auto-send the composed message.
-  const [scheduleOpen, setScheduleOpen] = useState(false)
-  const [schedRepeat, setSchedRepeat] = useState<Repeat>('none')
-  useJobs((s) => s.byWorkspace) // re-render when this pane's schedule list changes
   // Ticks once a minute so the "N분 전" footer stays current without a per-frame
   // clock (native refreshes the relative time on a 1-min timer too).
   const [now, setNow] = useState(() => Date.now())
@@ -3108,18 +2392,10 @@ export default function ChatPanel({
   const peers = rosterFor(workspace).filter((a) => a.id !== chatKey)
   // A mention handle is the member's name only (drop the " · group" suffix) — short
   // and stable, so "@리드 팀 붙이자" doesn't leak the group name into the token.
-  const mentionQ = /(?:^|\s)@([^@]*)$/.exec(input)
-  const mentionQuery = mentionQ ? mentionQ[1].toLowerCase().trimStart() : null
-  const mentionMatches =
-    mentionQuery !== null
-      ? peers.filter((p) => mentionHandle(p.title).toLowerCase().includes(mentionQuery)).slice(0, 20)
-      : []
+  const mentionMatches = matchMentions(peers, mentionQuery(input))
   const mentionOpen = mentionMatches.length > 0
   const pickMention = (title: string): void => {
-    const handle = mentionHandle(title)
-    const next = input.replace(/(?:^|\s)@[^@]*$/, (m) =>
-      (m.startsWith(' ') ? ' ' : '') + '@' + handle + ' '
-    )
+    const next = insertMention(input, mentionHandle(title))
     setInput(next)
     setMentionIndex(0)
     if (inputRef.current) {
@@ -3163,23 +2439,9 @@ export default function ChatPanel({
   // spaces ("Claude Code", "리드 · 팀"), so a whitespace-delimited token is wrong —
   // match each "@..." against the known peer handles by longest prefix instead.
   const delegateMentions = (text: string): boolean => {
-    const handles = peers
-      .map((p) => ({ entry: p, handle: mentionHandle(p.title) }))
-      .filter((p) => p.handle)
-      .sort((a, b) => b.handle.length - a.handle.length) // longest first (specificity)
-    let rest = text.replace(/^\s+/, '')
-    const targets: RosterEntry[] = []
-    for (;;) {
-      if (!rest.startsWith('@')) break
-      const after = rest.slice(1)
-      const lc = after.toLowerCase()
-      const hit = handles.find((p) => lc.startsWith(p.handle.toLowerCase()))
-      if (!hit) break
-      if (!targets.some((t) => t.id === hit.entry.id)) targets.push(hit.entry)
-      rest = after.slice(hit.handle.length).replace(/^\s+/, '')
-    }
-    const body = rest.trim()
-    if (targets.length === 0 || !body) return false
+    const parsed = parseMentions(text, peers)
+    if (!parsed) return false
+    const { targets, body } = parsed
 
     // Interrupting a running agent is rarely what you meant — a CLI mid-turn will
     // read the line as an answer to whatever it is doing. Ask first, and name who.
@@ -3213,46 +2475,6 @@ export default function ChatPanel({
       inputRef.current.style.height = 'auto'
     }
   }
-
-  // Schedule the composer's text to send itself to THIS pane later.
-  //
-  // One scheduler, not two: this used to write to its own localStorage store
-  // with its own ticker, which knew nothing about runs, missed slots or the
-  // panel that lists them — and a second copy of the same idea is a second copy
-  // to keep in step. It is a Job with a pane target now, so it shows up in 예약
-  // 작업 beside everything else and is honest about what happened.
-  const doSchedule = (fireAt: number): void => {
-    const text = (inputRef.current?.value ?? input).trim()
-    if (!text || fireAt <= Date.now()) return
-    const when = new Date(fireAt)
-    const trigger: Trigger =
-      schedRepeat === 'hourly'
-        ? { kind: 'hourly', minute: when.getMinutes() }
-        : schedRepeat === 'daily'
-          ? { kind: 'daily', hour: when.getHours(), minute: when.getMinutes() }
-          : { kind: 'once', at: fireAt }
-    useJobs.getState().add(workspace, {
-      name: text.split('\n')[0].slice(0, 30),
-      prompt: text,
-      trigger,
-      target: { kind: 'pane', chatKey, title: titleRef.current || 'Claude' },
-      enabled: true,
-      graceMinutes: 60
-    })
-    setScheduleOpen(false)
-    setSchedRepeat('none')
-    clearComposer()
-  }
-  // What this pane has waiting, in the shape the popover already speaks.
-  const pendingSchedules = (useJobs.getState().byWorkspace[workspace] ?? [])
-    .filter((j) => j.enabled && j.target.kind === 'pane' && j.target.chatKey === chatKey)
-    .map((j) => ({
-      id: j.id,
-      text: j.prompt,
-      fireAt: nextRunOf(j) ?? 0,
-      repeat: (j.trigger.kind === 'hourly' ? 'hourly' : j.trigger.kind === 'daily' ? 'daily' : 'none') as Repeat
-    }))
-    .sort((a, b) => a.fireAt - b.fireAt)
 
   // Load a past session INTO this pane: resume its CLI context and show its
   // reconstructed transcript (native /resume).
@@ -3537,35 +2759,11 @@ export default function ChatPanel({
       {/* What you have typed but not sent yet. Above the composer, where the
           other "about to happen" strips are — and in the order it will go out,
           which a column of bubbles in the transcript could not show. */}
-      {queued.length > 0 && (
-        <div className="chat-queue">
-          <div className="chat-queue-head">
-            {t('chat.queueHead', { n: queued.length })}
-          </div>
-          {queued.map((q, i) => (
-            <div className="chat-queue-row" key={q.id}>
-              <span className="chat-queue-no">{i + 1}</span>
-              <span className="chat-queue-text" title={q.text}>
-                {q.text || t('chat.queueImageOnly', { n: q.images.length })}
-              </span>
-              <button
-                className="chat-queue-act"
-                title={t('chat.sendNowHint')}
-                onClick={() => sendQueuedNow(q.id)}
-              >
-                {t('chat.sendNow')}
-              </button>
-              <button
-                className="chat-queue-act icon"
-                title={t('chat.dropQueued')}
-                onClick={() => dropQueued(q.id)}
-              >
-                <XIcon size={11} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <QueueStrip
+        items={queued.map((q) => ({ id: q.id, text: q.text, images: q.images.length }))}
+        onSendNow={sendQueuedNow}
+        onDrop={dropQueued}
+      />
 
       {/* Compaction is the longest silence a pane ever has: the CLI is rewriting
           the whole conversation into a summary and says nothing else while it
@@ -3577,16 +2775,7 @@ export default function ChatPanel({
       {/* Backgrounded commands outlive the turn that started them. Without this
           the pane went quiet with work still running, and the only sign it had
           ever happened was the agent mentioning it, minutes later. */}
-      {(bgTasks.length > 0 || delegations.length > 0) && (
-        <div className="chat-bgtasks">
-          {bgTasks.map((task) => (
-            <BgTaskChip key={task.id} task={task} since={bgStarted.current.get(task.id)} />
-          ))}
-          {delegations.map((d) => (
-            <DelegationChip key={d.id} d={d} />
-          ))}
-        </div>
-      )}
+      <WorkStrip tasks={bgTasks} since={(id) => bgStarted.current.get(id)} delegations={delegations} />
 
       <div className={`chat-composer${input.trim().startsWith('/') ? ' is-command' : ''}`}>
         {/* What will go with the message, visible before it is sent — and
@@ -3696,7 +2885,7 @@ export default function ChatPanel({
               }
               if (e.key === 'Escape') {
                 e.preventDefault()
-                const next = input.replace(/(?:^|\s)@[^@]*$/, '')
+                const next = dropMentionQuery(input)
                 setInput(next)
                 if (inputRef.current) inputRef.current.value = next
                 return
@@ -3776,16 +2965,13 @@ export default function ChatPanel({
             <ModelOptions cli={cli} configDir={claudeConfigDirFor(workspace)} current={pickedModel} />
           </select>
           <div className="chat-actions-spacer" />
-          <button
-            className={`chat-sched-btn${scheduleOpen ? ' on' : ''}${pendingSchedules.length ? ' has' : ''}`}
-            onClick={() => setScheduleOpen((o) => !o)}
-            title={t('chat.schedule.title')}
-          >
-            <Clock size={14} />
-            {pendingSchedules.length > 0 && (
-              <span className="chat-sched-count">{pendingSchedules.length}</span>
-            )}
-          </button>
+          <ScheduleControl
+            workspace={workspace}
+            chatKey={chatKey}
+            getTitle={() => titleRef.current || 'Claude'}
+            getText={() => inputRef.current?.value ?? input}
+            onScheduled={clearComposer}
+          />
           {busy ? (
             <button className="chat-send stop" onClick={stopTurn} title={t('chat.stop')}>
               <Square size={11} fill="currentColor" />
@@ -3796,17 +2982,6 @@ export default function ChatPanel({
             </button>
           )}
         </div>
-        {scheduleOpen && (
-          <SchedulePopover
-            hasText={(input || inputRef.current?.value || '').trim().length > 0}
-            repeat={schedRepeat}
-            setRepeat={setSchedRepeat}
-            onSchedule={doSchedule}
-            pending={pendingSchedules}
-            onCancel={(id) => useJobs.getState().remove(workspace, id)}
-            onClose={() => setScheduleOpen(false)}
-          />
-        )}
       </div>
     </div>
   )

@@ -1,11 +1,15 @@
 import { memo, useEffect, useState } from 'react'
-import { ChevronRight, FileText } from 'lucide-react'
+import { ChevronRight, FileText, Forward } from 'lucide-react'
 import Markdown from '../../../components/Markdown'
 import { viewImage } from '../../../components/ImageLightbox'
 import { useT } from '../../../i18n'
+import { wakeTitles } from '../../../lib/wake'
+import { wakeNotices } from '../../../state/cliChats'
+import { ChatCode, CopyBtn } from '../chatkit/Code'
 import {
   recordOf,
   tokens,
+  toolCode,
   toolSummary,
   userParts,
   type AgentProgress,
@@ -49,7 +53,26 @@ function Thumb({ chatKey, uuid, index }: { chatKey: string; uuid: string; index:
   )
 }
 
+// A message nobody typed: the answer of work this pane handed off in the
+// background, brought back (returnToCaller). Drawn as what happened, the way
+// the chat pane opens that turn, not as a bubble of the person's.
+function WakeNotices({ notices }: { notices: string[] }): JSX.Element {
+  const t = useT()
+  return (
+    <div className="chat-turn assistant">
+      {notices.map((what, i) => (
+        <div key={i} className="chat-notice info">
+          <Forward size={12} />
+          <span className="chat-notice-text">{t('chat.delegationDone', { what })}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function UserBubble({ chatKey, user }: { chatKey: string; user: NonNullable<Turn['user']> }): JSX.Element {
+  const woke = user.command ? null : (wakeNotices(user.text) ?? wakeTitles(user.text))
+  if (woke) return <WakeNotices notices={woke} />
   const parts = user.command ? [{ kind: 'text' as const, text: user.text }] : userParts(user.text)
   return (
     <div className="chat-turn user">
@@ -102,14 +125,18 @@ const ToolRowView = memo(function ToolRowView({
   // own files say it finished.
   const running = !tool.result || (agent != null && !agent.done)
   const state = running ? 'running' : tool.result?.isError ? 'error' : 'done'
+  const code = toolCode(tool.name, tool.input)
+  const isAgent = tool.name === 'Agent' || tool.name === 'Task'
   return (
-    <details className={`cli-chat-tool ${state}`}>
+    // data-agent-id: the running-agents strip scrolls to it.
+    <details className={`cli-chat-tool ${state}`} data-agent-id={isAgent ? tool.toolId : undefined}>
       <summary>
         <ChevronRight size={12} className="cli-chat-chev" />
         <span className="cli-chat-tool-name">{tool.name}</span>
         {summary && <span className="cli-chat-tool-arg">{summary}</span>}
       </summary>
       {agent && <AgentLine a={agent} />}
+      {code && <ChatCode code={code.code} diff={code.diff} path={code.path} />}
       {tool.result && <pre className="cli-chat-tool-result">{tool.result.text || ' '}</pre>}
     </details>
   )
@@ -125,6 +152,11 @@ export const TurnView = memo(function TurnView({
   agents: Record<string, AgentProgress>
 }): JSX.Element {
   const t = useT()
+  // The turn's answer, for the copy button.
+  const reply = turn.blocks
+    .filter((b): b is Extract<Block, { kind: 'text' }> => b.kind === 'text')
+    .map((b) => b.text)
+    .join('\n\n')
   return (
     <>
       {turn.user && <UserBubble chatKey={chatKey} user={turn.user} />}
@@ -177,6 +209,7 @@ export const TurnView = memo(function TurnView({
                 out: tokens(turn.usage.output)
               })}
               {turn.durationMs != null && ` · ${(turn.durationMs / 1000).toFixed(1)}s`}
+              {reply && <CopyBtn code={reply} title={t('chat.copyMessage')} />}
             </div>
           )}
         </div>

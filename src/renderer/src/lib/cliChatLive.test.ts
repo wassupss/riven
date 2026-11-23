@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CliEvent } from './cliChat'
 import {
+  finishedTasks,
   foldLive,
   liveWork,
   menuAsks,
@@ -120,5 +121,18 @@ describe('the ask queue mirror', () => {
     expect(notifyBody('Done.\n```ts\nx\n```\nAll   good', 'fallback')).toBe('Done. All good')
     expect(notifyBody('  ', 'fallback')).toBe('fallback')
     expect(notifyBody('x'.repeat(200), '').length).toBe(161)
+  })
+})
+
+describe('finished background tasks', () => {
+  it('reports what stopped running', () => {
+    const a = { id: 'a', status: 'running', description: 'dev server' }
+    const b = { id: 'b', status: 'running', type: 'shell' }
+    expect(finishedTasks([a, b], [{ ...b, status: 'failed' }])).toEqual([
+      { id: 'a', label: 'dev server', status: 'completed' },
+      { id: 'b', label: 'shell', status: 'failed' }
+    ])
+    expect(finishedTasks([a], [a])).toEqual([])
+    expect(finishedTasks([{ ...a, status: 'completed' }], [])).toEqual([])
   })
 })

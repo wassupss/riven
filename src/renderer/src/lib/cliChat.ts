@@ -429,3 +429,73 @@ export function questionAnswers(
   }
   return out
 }
+
+// ---- the composer's queue ------------------------------------------------------
+
+/**
+ * Whether the next message typed during a turn can go now: the turn is over
+ * and nothing waits on the person (a card, a menu, the terminal view). A
+ * parked CLI is fine: the message resumes it.
+ */
+export function canSendQueued(s: CliState): boolean {
+  if (s.dead || s.busy || s.waiting || s.menu || s.blocked || s.terminal) return false
+  return s.ready || !!s.parked
+}
+
+// ---- tool code ---------------------------------------------------------------
+
+/**
+ * A line diff of an edit, " kept", "-removed", "+added" per line (an LCS
+ * walk, as the headless chat's tool_code does). Past 800 lines a side it is
+ * all removed then all added.
+ */
+export function lineDiff(before: string, after: string): string {
+  const a = before ? before.split('\n') : []
+  const b = after ? after.split('\n') : []
+  const m = a.length
+  const n = b.length
+  if (m > 800 || n > 800) return [...a.map((l) => `-${l}`), ...b.map((l) => `+${l}`)].join('\n')
+  const w = n + 1
+  const dp = new Uint32Array((m + 1) * w)
+  for (let i = m - 1; i >= 0; i--)
+    for (let j = n - 1; j >= 0; j--)
+      dp[i * w + j] = a[i] === b[j] ? dp[(i + 1) * w + j + 1] + 1 : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1])
+  const out: string[] = []
+  let i = 0
+  let j = 0
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push(` ${a[i]}`)
+      i++
+      j++
+    } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) out.push(`-${a[i++]}`)
+    else out.push(`+${b[j++]}`)
+  }
+  while (i < m) out.push(`-${a[i++]}`)
+  while (j < n) out.push(`+${b[j++]}`)
+  return out.join('\n')
+}
+
+/** The code a tool row shows: an edit's diff, a command, a file's content. */
+export function toolCode(name: string, input: unknown): { code: string; diff: boolean; path: string | null } | null {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const str = (k: string, from: Record<string, unknown> = o): string => (typeof from[k] === 'string' ? (from[k] as string) : '')
+  const path = str('file_path') || str('notebook_path') || null
+  switch (name) {
+    case 'Edit':
+      return 'old_string' in o ? { code: lineDiff(str('old_string'), str('new_string')), diff: true, path } : null
+    case 'MultiEdit': {
+      const edits = Array.isArray(o.edits) ? (o.edits as Record<string, unknown>[]) : []
+      const body = edits.map((e) => lineDiff(str('old_string', e), str('new_string', e))).join('\n')
+      return body ? { code: body, diff: true, path } : null
+    }
+    case 'Write':
+      return str('content') ? { code: str('content'), diff: false, path } : null
+    case 'NotebookEdit':
+      return str('new_source') ? { code: str('new_source'), diff: false, path } : null
+    case 'Bash':
+      return str('command') ? { code: str('command'), diff: false, path: null } : null
+    default:
+      return null
+  }
+}

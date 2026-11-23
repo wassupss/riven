@@ -917,6 +917,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'clichat.mode.auto': { ko: '자동 모드', en: 'Auto mode' },
   'clichat.mode.codexFull': { ko: '전체 접근 (승인 없음)', en: 'Full access (no approvals)' },
   'clichat.session.new': { ko: '새 대화', en: 'New conversation' },
+  'clichat.sendNowHint': {
+    ko: '진행 중인 턴에 지금 넣습니다. Claude는 실행 중인 명령을 백그라운드로 돌리고, Codex는 하던 일을 멈추고 받습니다 (⌘↵)',
+    en: 'Into the running turn now: Claude moves the running command to the background, Codex stops what it is doing (⌘↵)'
+  },
+  'clichat.mentionSent': { ko: '@{names}에게 보냄: {text}', en: 'Sent to @{names}: {text}' },
   'clichat.session.current': { ko: '지금 대화', en: 'current' },
   'clichat.menu.title': { ko: 'CLI가 선택을 기다립니다', en: 'The CLI is waiting for a choice' },
   'clichat.menu.cancel': { ko: '취소 (Esc)', en: 'Cancel (Esc)' },
@@ -961,6 +966,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Cut the running turn short and send this now (⌘↵)'
   },
   'chat.dropQueued': { ko: '대기 취소', en: 'Discard' },
+  'chat.editQueued': { ko: '고치기 (입력창으로)', en: 'Edit (back to the composer)' },
   'chat.schedule.title': { ko: '메시지 예약', en: 'Schedule message' },
   'chat.schedule.needText': { ko: '예약할 메시지를 먼저 입력하세요.', en: 'Type a message to schedule first.' },
   'chat.schedule.set': { ko: '예약', en: 'Set' },

@@ -5,7 +5,8 @@ import { prettyModelId } from '../../../lib/models'
 import { MODES, modeValue, type CliState } from '../../../lib/cliChat'
 
 // The CLI chat's bar: state, the conversation, model and permission mode,
-// the session list and the terminal view.
+// the session list and the terminal view. Background work is the strip
+// above the composer.
 //
 // Model and mode are flags of the CLI process: a change restarts it with
 // --resume at the end of the turn (services/clichat/life.rs). /model is never
@@ -70,7 +71,6 @@ export default function Header({
             : state.busy
               ? t('clichat.working')
               : ''
-  const bg = state.background?.filter((b) => b.status !== 'completed') ?? []
   const codex = cli === 'codex'
   const shownMode = codex ? mode : modeValue(state.mode ?? mode)
   const base: readonly string[] = codex ? CODEX_MODES : MODES
@@ -87,11 +87,6 @@ export default function Header({
         </span>
       ) : (
         state.sessionId && <span className="cli-chat-session">{state.sessionId.slice(0, 8)}</span>
-      )}
-      {bg.length > 0 && (
-        <span className="cli-chat-bg" title={bg.map((b) => b.description ?? b.id).join('\n')}>
-          {t('clichat.background', { n: bg.length })}
-        </span>
       )}
       {state.restartPending && <span className="cli-chat-bg">{t('clichat.restartPending')}</span>}
       <span className="cli-chat-spacer" />
@@ -117,12 +112,10 @@ export default function Header({
       >
         <ModelOptions cli={cli} configDir={configDir} current={model} />
       </select>
-      {/* The session list reads Claude Code's projects; Codex has none here. */}
-      {!codex && (
-        <button className={`cli-chat-btn${sessionsOpen ? ' primary' : ''}`} onClick={onSessions} title={t('chat.resumeTitle')}>
-          <History size={13} />
-        </button>
-      )}
+      {/* Claude Code's projects, or Codex's rollouts for this folder. */}
+      <button className={`cli-chat-btn${sessionsOpen ? ' primary' : ''}`} onClick={onSessions} title={t('chat.resumeTitle')}>
+        <History size={13} />
+      </button>
       {state.dead ? (
         <button className="cli-chat-btn" onClick={onRestart}>
           <RotateCcw size={13} /> {t('clichat.restart')}

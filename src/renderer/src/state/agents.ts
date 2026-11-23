@@ -324,3 +324,16 @@ export function attachToWorkspaceAgent(ws: string, text: string): boolean {
   target.attach(text)
   return true
 }
+
+/**
+ * Stop the turn a chat pane is in, whichever engine runs it (a goal or a
+ * pipeline being stopped). A mounted pane stops the way its own Stop does
+ * (the CLI chat also drops what was queued behind the turn); an unmounted
+ * one is interrupted directly.
+ */
+export function interruptPane(chatKey: string): void {
+  const c = controllers.get(chatKey)
+  if (c?.remote) return c.remote.stop()
+  window.api.cliChat.interrupt(chatKey)
+  window.api.chat.interrupt(chatKey)
+}

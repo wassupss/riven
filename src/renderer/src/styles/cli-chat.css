@@ -179,8 +179,16 @@ details[open] > summary > .cli-chat-chev {
   opacity: 0.75;
 }
 .cli-chat-working {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: var(--text-sm);
   color: var(--fg-dim);
+}
+/* An @mention handed to another pane (it is not part of this conversation). */
+.cli-chat-note.mention {
+  border-left: 2px solid var(--fg-dim);
+  padding-left: 8px;
 }
 .cli-chat-blocked {
   display: flex;
