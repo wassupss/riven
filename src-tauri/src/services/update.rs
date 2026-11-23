@@ -126,9 +126,22 @@ pub fn check() {
     let Some(update) = up.check().await.map_err(|e| e.to_string())? else { return Ok(None) };
     let v = update.version.clone();
     send(json!({ "state": "available", "version": v }));
-    send(json!({ "state": "downloading", "version": v }));
+    send(json!({ "state": "downloading", "version": v, "percent": 0 }));
+    // Progress as the page shows it (whole percents, sent only on change).
+    let (mut got, mut last) = (0u64, 0u64);
+    let pv = v.clone();
+    let on_chunk = move |n: usize, total: Option<u64>| {
+      got += n as u64;
+      if let Some(t) = total.filter(|t| *t > 0) {
+        let p = (got * 100 / t).min(100);
+        if p != last {
+          last = p;
+          send(json!({ "state": "downloading", "version": pv, "percent": p }));
+        }
+      }
+    };
     // The plugin verifies the signature against the key before it hands the bytes over.
-    let bytes = update.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    let bytes = update.download(on_chunk, || {}).await.map_err(|e| e.to_string())?;
     *ready().lock().unwrap() = Some((update, bytes));
     Ok(Some(v))
   });

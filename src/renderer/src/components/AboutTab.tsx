@@ -26,7 +26,11 @@ export default function AboutTab(): JSX.Element {
       line = t('about.downloading', { v: status.version })
       break
     case 'downloading':
-      line = t('about.progress', { p: String(status.percent) })
+      // No total from the server: say what is downloading instead of "undefined%".
+      line =
+        typeof status.percent === 'number'
+          ? t('about.progress', { p: String(status.percent) })
+          : t('about.downloading', { v: status.version ?? '' })
       break
     case 'downloaded':
       line = t('about.ready', { v: status.version })
