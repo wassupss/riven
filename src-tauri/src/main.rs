@@ -926,7 +926,27 @@ pub(crate) fn pop_theme(app: &AppHandle, color_hex: &str, mode: &str) {
   }
 }
 
+/// A Claude Code session's own variables, when the app was started from one
+/// (a shell or script inside Claude Code, then kept across updater restarts).
+/// Every terminal inherits the app's environment, and a `claude` that sees
+/// them runs as that session's child: its conversation never lands in
+/// ~/.claude/projects, so --resume later brings back an old one. Cleared before
+/// any thread starts. CLAUDE_CONFIG_DIR stays: that one is the user's choice.
+fn is_claude_session_var(k: &str) -> bool {
+  k == "CLAUDECODE" || k == "CLAUDE_PID" || k == "CLAUDE_EFFORT" || k.starts_with("CLAUDE_CODE_") || k.starts_with("CLAUDE_AUTOCOMPACT_")
+}
+
+fn strip_claude_session_env() {
+  let keys: Vec<std::ffi::OsString> =
+    std::env::vars_os().map(|(k, _)| k).filter(|k| k.to_str().is_some_and(is_claude_session_var)).collect();
+  for k in keys {
+    // SAFETY: first thing in main, before any other thread exists.
+    unsafe { std::env::remove_var(k) };
+  }
+}
+
 fn main() {
+  strip_claude_session_env();
   // Debug builds: the DB engine on stdin/stdout, no window (services/db/harness.rs).
   #[cfg(debug_assertions)]
   if std::env::var_os("RIVEN_DB_HARNESS").is_some() {
@@ -1122,4 +1142,17 @@ fn main() {
     }
     _ => {}
   });
+}
+
+#[cfg(test)]
+mod claude_env_tests {
+  #[test]
+  fn strips_session_vars_only() {
+    for k in ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] {
+      assert!(super::is_claude_session_var(k), "{k}");
+    }
+    for k in ["CLAUDE_CONFIG_DIR", "PATH", "HOME", "RIVEN_MCP_CONFIG", "ANTHROPIC_API_KEY"] {
+      assert!(!super::is_claude_session_var(k), "{k}");
+    }
+  }
 }
