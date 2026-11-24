@@ -6,6 +6,7 @@ import ReactDOM from 'react-dom/client'
 import './editor/highlight'
 import { initOutputCapture } from './state/outputLog'
 import { installDialogRouting } from './lib/hostWindow'
+import { installNoNativeMenu } from './lib/noNativeMenu'
 import { hydrateFileStore } from './lib/fileStore'
 import './styles.css'
 
@@ -13,6 +14,8 @@ import './styles.css'
 initOutputCapture()
 // confirm/alert from a popped-out panel open over that window, not the parent.
 installDialogRouting()
+// No WebKit right-click menu (Reload/Inspect) anywhere in the app.
+installNoNativeMenu()
 
 // The app's data files are read before the app's modules load: several of them
 // (pipelines, the DB console, the sign-in session) read their store as they

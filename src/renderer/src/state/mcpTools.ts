@@ -1,4 +1,5 @@
 import { useSession, pathOf, widForPane, loadPaneState } from './session'
+import { petActingWorkspace } from './petAssistScope'
 import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
@@ -154,6 +155,11 @@ function resolveCtx(caller: Caller): Ctx {
       const w = contextBus.workspaceOfPane(Number(term[1]))
       if (w) return w
     }
+    // A pet assistant (펫 비서) spanning several workspaces: the one its scope
+    // says (state/petAssistScope). One scoped to a single workspace runs in
+    // its folder and is attributed by the cwd below.
+    const petWs = petActingWorkspace(caller.key)
+    if (petWs) return petWs
     // No pane (a terminal agent, or a CLI riven did not spawn): attribute by the
     // directory it runs in. riven always spawns an agent with cwd = its workspace,
     // so this covers everything the key doesn't.

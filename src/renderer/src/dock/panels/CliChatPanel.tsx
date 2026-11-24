@@ -138,7 +138,7 @@ export default function CliChatPanel({
       .start(key, opts({ resume: resume ?? undefined }))
       .then((r) => {
         setError(null)
-        remember(r.sessionId)
+        if (r.sessionId) remember(r.sessionId)
         started.current = true
         // The message the pane was opened with (addChat), then anything an
         // agent or a job sent before the session was up. Rust queues them
@@ -374,7 +374,7 @@ export default function CliChatPanel({
       .restart(key, opts({ resume, fork }))
       .then((r) => {
         setError(null)
-        remember(r.sessionId)
+        if (r.sessionId) remember(r.sessionId)
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
   }

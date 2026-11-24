@@ -110,6 +110,14 @@ pub struct StartOpts {
   pub agent: Option<String>,
   /// "codex" runs the interactive codex (codex.rs); anything else claude.
   pub cli: Option<String>,
+  /// With `resume`: load the conversation without starting a process (a
+  /// parked session). The next message starts it, as for one parked for
+  /// being idle. Used to show a pet assistant's conversation without
+  /// running anything.
+  pub parked: Option<bool>,
+  /// Park after this many idle seconds instead of life::PARK_AFTER (a pet
+  /// assistant waits less: it is a background helper, not a pane on screen).
+  pub park_after_secs: Option<u64>,
 }
 
 impl StartOpts {
@@ -453,6 +461,12 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
   let resume_from = resume.clone().filter(|r| transcript_exists(&opts, r));
   let fork = opts.fork == Some(true) && resume_from.is_some();
   let codex = opts.is_codex();
+  // Only the conversation is wanted, not a process: nothing to load when
+  // there is no transcript yet (the first message starts it fresh).
+  let parked = opts.parked == Some(true) && !codex;
+  if parked && (resume_from.is_none() || fork) {
+    return Ok(json!({ "sessionId": Value::Null, "existed": false, "parked": true }));
+  }
   // Codex names a new conversation (and a fork) itself: its id comes with
   // the SessionStart hook.
   let session_id = match (codex, fork) {
@@ -461,7 +475,18 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
     (false, true) => crate::services::util::uuid(),
     (false, false) => resume.clone().unwrap_or_else(crate::services::util::uuid),
   };
-  let (cmd, path, real) = if codex {
+  let (cmd, path, real) = if parked {
+    // No process: no command line and no environment, only where the
+    // transcript is (by its id when the folder name is hashed).
+    let id = resume_from.clone().unwrap_or_default();
+    let mut path = transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), &id);
+    if !path.is_file() {
+      if let Some(p) = transcript::find_by_id(opts.config_dir.as_deref(), &id) {
+        path = p;
+      }
+    }
+    (String::new(), path, (HashMap::new(), None))
+  } else if codex {
     let (extras, extra) = codex_env(&key, &opts).await;
     let real = extras.get("RIVEN_REAL_CODEX").cloned();
     let start = match (&resume_from, fork) {
@@ -482,7 +507,7 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
   };
   let (extras, real) = real;
   let bin_path = real.map(PathBuf::from).or_else(|| crate::services::shell_env::which(if codex { "codex" } else { "claude" }));
-  let kept = StartOpts { resume: None, fork: None, ..opts.clone() };
+  let kept = StartOpts { resume: None, fork: None, parked: None, ..opts.clone() };
   let now = Instant::now();
   let sess = Arc::new(Mutex::new(Sess {
     key: key.clone(),
@@ -524,6 +549,20 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
     codex: codex.then(codex::Translator::default),
   }));
   all().insert(key.clone(), sess.clone());
+  if parked {
+    // The transcript as it is, and no process: send() resumes it (relaunch).
+    let mut st = lock(&sess);
+    st.parked = true;
+    pump_transcript(&mut st);
+    let items = st.store.branch();
+    st.sent = items.iter().map(|i| i.key().to_string()).collect();
+    st.fresh = false;
+    let _ = st.store.take_dirty();
+    emit(&st.label, json!({ "key": key, "kind": "items", "reset": true, "items": items }));
+    emit_state(&st);
+    emit_title(&st);
+    return Ok(json!({ "sessionId": session_id, "existed": false, "parked": true }));
+  }
   {
     let st = lock(&sess);
     // Whatever the page shows belongs to the process before this one.
@@ -656,6 +695,7 @@ async fn run(s: Arc<Mutex<Sess>>) {
         reconfigure: st.reconfigure,
         updated: st.updated,
         idle_for: st.last_active.elapsed(),
+        park_after: Duration::from_secs(st.opts.park_after_secs.unwrap_or(0)),
       };
       match life::next(&snap) {
         life::Next::Stay => {}

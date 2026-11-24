@@ -8,6 +8,7 @@ import { emitCliTurnDone } from './cliTurnBus'
 import { publishWork, reportTaskFinished } from './chatWork'
 import { bgTaskOutcome } from '../lib/bgTaskOutcome'
 import { forgetCliChat, markCliChat } from './cliChatKeys'
+import { isPetChatKey } from '../lib/petAssistant'
 import { useRoster, workspaceOfPane } from './roster'
 import { useSession } from './session'
 import { getSettings } from './settings'
@@ -184,6 +185,9 @@ function notifyWaiting(key: string): void {
 function onEvent(e: CliEvent): void {
   const key = e.key
   markCliChat(key)
+  // A pet assistant's session (펫 비서) is no pane: its roster, cards,
+  // notifications and turn ends are the pet's (state/petAssistants).
+  if (isPetChatKey(key)) return
   const prev = live.get(key)
   const { live: l, done } = foldLive(prev, e, Date.now())
   live.set(key, l)

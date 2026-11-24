@@ -2378,6 +2378,77 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.talk.prompt': { ko: '뭐든 물어보세요. 지금 바빠? / 레벨 몇이야? / 한도 남았어?', en: 'Ask it something: busy? / what level are you? / how much plan is left?' },
   'pet.talk.placeholder': { ko: '물어보기…', en: 'ask…' },
   'pet.talk.hi': { ko: '안녕!', en: 'hi!' },
+  // 펫 비서: a pet that is a real Claude assistant.
+  'pet.assist.label': { ko: '비서', en: 'Assistant' },
+  'pet.assist.tag': { ko: '비서', en: 'Assistant' },
+  'pet.assist.hint': {
+    ko: '말을 걸면 Claude가 이 펫의 역할대로 답하고 riven 도구로 일해요',
+    en: 'Talking to it goes to Claude, which answers in its role and works through riven’s tools'
+  },
+  'pet.assist.settings': { ko: '비서 설정…', en: 'Assistant settings…' },
+  'pet.assist.titleFor': { ko: '{name} 비서 설정', en: '{name}: assistant settings' },
+  'pet.assist.useAs': { ko: '비서로 쓰기', en: 'Use as an assistant' },
+  'pet.assist.useAsDesc': {
+    ko: '첫 대화 때 시작하고, 쉬는 동안엔 멈춰 둡니다',
+    en: 'Starts when you first talk to it, rests when idle'
+  },
+  'pet.assist.role': { ko: '역할', en: 'Role' },
+  'pet.assist.rolePlaceholder': {
+    ko: '예: 매일 아침 열린 워크스페이스의 git 상태를 정리해 주는 비서',
+    en: 'e.g. keeps an eye on the git state of the open workspaces'
+  },
+  'pet.assist.model': { ko: '모델', en: 'Model' },
+  'pet.assist.permission': { ko: '권한', en: 'Permission' },
+  'pet.assist.perm.plan': { ko: '계획만', en: 'Plan only' },
+  'pet.assist.perm.default': { ko: '매번 묻기', en: 'Ask each time' },
+  'pet.assist.perm.acceptEdits': { ko: '파일 수정 허용', en: 'Allow file edits' },
+  'pet.assist.permDesc.plan': {
+    ko: '살펴보고 제안만 해요. 아무것도 바꾸지 않아요.',
+    en: 'Looks and proposes. Changes nothing.'
+  },
+  'pet.assist.permDesc.default': {
+    ko: '파일 수정이나 명령 실행 전에 펫이 물어봐요.',
+    en: 'Asks you before editing files or running commands.'
+  },
+  'pet.assist.permDesc.acceptEdits': {
+    ko: '파일은 바로 고치고, 명령 실행은 물어봐요.',
+    en: 'Edits files without asking, still asks before commands.'
+  },
+  'pet.assist.scope': { ko: '작업 범위', en: 'Workspaces' },
+  'pet.assist.scopeAll': { ko: '모든 워크스페이스', en: 'All workspaces' },
+  'pet.assist.scopeSome': { ko: '선택한 워크스페이스', en: 'Chosen ones' },
+  'pet.assist.noWorkspaces': { ko: '열린 워크스페이스가 없어요', en: 'No workspace is open' },
+  'pet.assist.wsClosed': { ko: '지금 닫혀 있음', en: 'Closed now' },
+  'pet.assist.pickOne': { ko: '하나 이상 골라 주세요', en: 'Pick at least one' },
+  'pet.assist.saved': { ko: '저장했어요', en: 'Saved' },
+  'pet.assist.prompt': {
+    ko: '{name}에게 일을 맡겨 보세요. Claude가 riven 도구로 처리해요.',
+    en: 'Give {name} something to do. Claude handles it with riven’s tools.'
+  },
+  'pet.assist.ask': { ko: '부탁하기…', en: 'ask…' },
+  'pet.assist.placeholder': { ko: '{name}에게 부탁하기', en: 'Ask {name}' },
+  'pet.assist.thinking': { ko: '알았어, 해볼게!', en: 'on it!' },
+  'pet.assist.working': { ko: '작업 중…', en: 'working…' },
+  'pet.assist.needsYou': { ko: '확인이 필요해!', en: 'I need your OK!' },
+  'pet.assist.otherWaits': { ko: '{name}이(가) 확인을 기다려', en: '{name} is waiting for you' },
+  'pet.assist.otherSays': { ko: '{name}: {text}', en: '{name}: {text}' },
+  'pet.assist.doneEmpty': { ko: '다 했어!', en: 'done!' },
+  'pet.assist.failed': { ko: '이번엔 잘 안 됐어. 대화를 열어 봐', en: 'that did not work, open the conversation' },
+  'pet.assist.stop': { ko: '중단', en: 'Stop' },
+  'pet.assist.resting': { ko: '쉬는 중 (다음 부탁에 깨어나요)', en: 'resting (wakes on the next ask)' },
+  'pet.assist.open': { ko: '대화 열기', en: 'Open conversation' },
+  'pet.assist.parkedNote': {
+    ko: '지금은 쉬는 중이에요. 메시지를 보내면 이 대화를 이어서 시작해요.',
+    en: 'Resting now. Send a message to carry on this conversation.'
+  },
+  'pet.assist.chatTitle': { ko: '{name} · 대화', en: '{name} · conversation' },
+  'pet.assist.chatEmpty': { ko: '아직 나눈 대화가 없어요', en: 'No conversation yet' },
+  'pet.assist.off': { ko: '이 펫은 지금 비서가 아니에요', en: 'This pet is not an assistant now' },
+  'pet.assist.terminal': { ko: '터미널 보기', en: 'Terminal view' },
+  'pet.assist.noCommands': {
+    ko: '펫 비서에는 / 명령어를 보낼 수 없어요',
+    en: 'Slash commands are not sent to a pet assistant'
+  },
   'pet.talk.busy': { ko: '{where}에서 {n}개 돌아가는 중', en: '{n} running in {where}' },
   'pet.talk.busyNone': { ko: '지금은 다 조용해', en: 'all quiet right now' },
   'pet.talk.finished': { ko: '{where}에서 {ago} 전에 끝났어', en: 'finished in {where} {ago} ago' },

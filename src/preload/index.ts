@@ -156,6 +156,10 @@ export interface CliChatStartOpts {
   agent?: string
   /** 'codex' runs the interactive codex; claude otherwise. */
   cli?: 'claude' | 'codex'
+  /** With resume: load the conversation without a process (the next message starts it). */
+  parked?: boolean
+  /** Park after this many idle seconds (default: the CLI chat's 30 minutes). */
+  parkAfterSecs?: number
 }
 
 export interface CliUpdateState {
@@ -179,6 +183,8 @@ const api = {
       platform: string
       claudePath: string | null
       hostname?: string
+      /** Where a pet assistant over several workspaces runs (riven's own folder). */
+      petHome?: string | null
     }> => ipcRenderer.invoke('env:defaults')
   },
   workspace: {
@@ -319,7 +325,10 @@ const api = {
     ): (() => void) => onPtyDone(cb)
   },
   cliChat: {
-    start: (key: string, opts: CliChatStartOpts): Promise<{ sessionId: string; existed: boolean }> =>
+    start: (
+      key: string,
+      opts: CliChatStartOpts
+    ): Promise<{ sessionId: string | null; existed: boolean; parked?: boolean }> =>
       ipcRenderer.invoke('clichat:start', key, opts),
     // A new process for the pane: another conversation (resume / fork / new)
     // or the same one again.

@@ -12,6 +12,7 @@ import {
 import { MAX_LEVEL, XP_TOKENS, levelOf } from './petLevel'
 import { sanitizeLayout, type DecorLayout } from './petLayout'
 import { sanitizeMotionSet, type MotionSet } from '../lib/petMotion'
+import { sanitizeAssistant, type AssistantConfig } from '../lib/petAssistant'
 
 // ---------------------------------------------------------------------------
 // 리븐펫: a pet that levels up on the tokens riven's agents actually spend.
@@ -189,6 +190,11 @@ export interface PetSave {
    * Not in a battle code (cardOf reads the design and the numbers only).
    */
   motion?: MotionSet
+  /**
+   * 펫 비서: this pet as a real Claude assistant (lib/petAssistant.ts). Absent
+   * when it never was one; `on: false` keeps the settings while it is off.
+   */
+  assistant?: AssistantConfig
   /** XP gained per model: what tilts its stats. */
   diet: Record<Flavor, number>
   /** XP gained per day, oldest first, at most HISTORY_DAYS entries. */
@@ -298,6 +304,7 @@ export function normalize(raw: unknown, now: number): PetSave {
   const custom = isCustomId(o.species) ? sanitizeDesign(o.custom) : null
   const layout = sanitizeLayout(o.layout)
   const motion = sanitizeMotionSet(o.motion)
+  const assistant = sanitizeAssistant(o.assistant)
   return {
     version: PET_VERSION,
     bornAt,
@@ -328,6 +335,7 @@ export function normalize(raw: unknown, now: number): PetSave {
     worn: Array.isArray(o.worn) ? wornOf(o.worn) : [],
     ...(layout ? { layout } : {}),
     ...(motion ? { motion } : {}),
+    ...(assistant ? { assistant } : {}),
     diet: FLAVORS.reduce(
       (d, f) => ({ ...d, [f]: count((o.diet as Record<string, unknown> | undefined)?.[f]) }),
       {} as Record<Flavor, number>
@@ -922,8 +930,9 @@ const sameList = (a: readonly number[], b: readonly number[]): boolean =>
  * way. Every pet's token carry (tokensToXp) keeps the small shares from being
  * rounded away.
  *
- * Even shares for now; when the pet assistant team lands, each pet's share
- * follows the work its role did instead.
+ * Even shares for general usage. An assistant pet's own turns are not in
+ * here: they feed that pet directly (feedOwn), and deductOwed keeps them out
+ * of the shared samples.
  */
 export function splitFood(deltas: Record<string, number>, k: number): Array<Record<string, number>> {
   const n = Math.max(1, Math.floor(k))
@@ -939,6 +948,90 @@ export function splitFood(deltas: Record<string, number>, k: number): Array<Reco
     }
   }
   return out
+}
+
+// ---- an assistant pet's own food ----
+// The first step toward "each pet eats from its own work": the tokens of a
+// pet assistant's own turns (펫 비서, lib/petAssistant.ts) go to THAT pet,
+// whole, not shared. The same tokens also show up in the account's daily
+// usage, which the pets out share (splitFood); so what an assistant was fed
+// directly is remembered as owed and taken out of the next shared samples of
+// the same model, to count every token once. General usage keeps the even
+// split among the pets out.
+
+/** One usage record of a CLI transcript (lib/cliChat's 'usage' item). */
+export interface UsageRecord {
+  model: string
+  input: number
+  output: number
+  cacheWrite: number
+  cacheRead: number
+}
+
+/** A turn's usage records as food tokens per flavour (foodOf), whole tokens. */
+export function turnFood(records: readonly UsageRecord[]): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const r of records) {
+    const food = foodOf(r)
+    if (food <= 0) continue
+    const f = flavorOf(r.model || '')
+    out[f] = (out[f] ?? 0) + food
+  }
+  for (const f of Object.keys(out)) {
+    out[f] = Math.floor(out[f])
+    if (out[f] <= 0) delete out[f]
+  }
+  return out
+}
+
+/**
+ * Take what was already fed to assistant pets directly (`owed`, per flavour)
+ * out of a shared sample's deltas (keys `…::<flavor>`), so those tokens are
+ * not eaten twice. Returns the deltas left to share and what is still owed.
+ */
+export function deductOwed(
+  deltas: Record<string, number>,
+  owed: Record<string, number>
+): { deltas: Record<string, number>; owed: Record<string, number> } {
+  const left = { ...owed }
+  const out: Record<string, number> = {}
+  for (const [key, raw] of Object.entries(deltas)) {
+    let d = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+    const flavor = key.split('::')[1] ?? 'other'
+    const due = Math.max(0, Math.floor(left[flavor] ?? 0))
+    if (due > 0 && d > 0) {
+      const take = Math.min(due, d)
+      d -= take
+      left[flavor] = due - take
+    }
+    if (d > 0) out[key] = d
+  }
+  for (const f of Object.keys(left)) if (!(left[f] > 0)) delete left[f]
+  return { deltas: out, owed: left }
+}
+
+/**
+ * Feed one pet (by birthday) its own food, per flavour, whether or not it is
+ * out on screen: it did the work. The same array when nothing changed.
+ */
+export function feedOwn(
+  n: { pets: PetSave[]; active: number },
+  bornAt: number,
+  food: Record<string, number>,
+  now: number
+): { pets: PetSave[]; leveled: LevelUp[] } {
+  const i = n.pets.findIndex((p) => Math.floor(p.bornAt) === Math.floor(bornAt))
+  if (i < 0) return { pets: n.pets, leveled: [] }
+  const before = n.pets[i]
+  let p = before
+  for (const [f, raw] of Object.entries(food)) {
+    const v = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+    if (v > 0) p = earn(p, v, now, FLAVORS.includes(f as Flavor) ? (f as Flavor) : 'other')
+  }
+  if (p === before) return { pets: n.pets, leveled: [] }
+  const lvl = levelOf(p.xp).level
+  const leveled = lvl > levelOf(before.xp).level ? [{ bornAt: p.bornAt, level: lvl }] : []
+  return { pets: n.pets.map((q, k) => (k === i ? p : q)), leveled }
 }
 
 /** Give every pet the same album, the longest one any of them carries. */
@@ -1045,6 +1138,9 @@ export function restart(n: Nest, now: number, i: number = n.active): Nest {
     ...initialState(now, hatch),
     species: old.species,
     name: old.name,
+    // Its assistant settings are the keeper's, like its name (its conversation
+    // is not: a new birthday is a new session).
+    ...(old.assistant ? { assistant: old.assistant } : {}),
     // A new birthday is a new pet to friends' battle records; never the same
     // one twice, and never one another pet in the nest has.
     bornAt: Math.max(now, ...n.pets.map((p) => p.bornAt + 1))
@@ -1080,6 +1176,8 @@ export interface PetBrief {
   layout?: DecorLayout
   /** Its own motion specs (the pet's 움직임). */
   motion?: MotionSet
+  /** Its assistant settings (펫 비서), when it has any. */
+  assistant?: AssistantConfig
 }
 export interface NestBrief {
   /** The focused pet (주인공). */
@@ -1102,7 +1200,8 @@ export function briefOf(n: { pets: PetSave[]; active: number; shown?: unknown })
       worn: p.worn,
       prizes: prizesOf(p),
       ...(p.layout ? { layout: p.layout } : {}),
-      ...(p.motion ? { motion: p.motion } : {})
+      ...(p.motion ? { motion: p.motion } : {}),
+      ...(p.assistant ? { assistant: p.assistant } : {})
     }))
   }
 }
@@ -1137,6 +1236,8 @@ export type PetCommand =
   | ({ op: 'decor'; worn: Accessory[]; layout: DecorLayout | null } & PetRef)
   /** The pet's own motion specs (null: as its species moves). */
   | ({ op: 'motion'; motion: MotionSet | null } & PetRef)
+  /** Its assistant settings (펫 비서); null forgets them. */
+  | ({ op: 'assistant'; assistant: AssistantConfig | null } & PetRef)
 /**
  * ok: done. full: no room for another pet. last: the only pet is never let go.
  * stale: that pet is not where the command thought it was. none: no one
@@ -1179,7 +1280,21 @@ export function applyCommand(n: Nest, cmd: PetCommand, now: number): { nest: Nes
       if (next === p) return { nest: n, result: 'ok' }
       return { nest: { ...n, pets: n.pets.map((q, i) => (i === cmd.index ? next : q)) }, result: 'ok' }
     }
+    case 'assistant': {
+      const next = withAssistant(p, cmd.assistant)
+      if (next === p) return { nest: n, result: 'ok' }
+      return { nest: { ...n, pets: n.pets.map((q, i) => (i === cmd.index ? next : q)) }, result: 'ok' }
+    }
   }
+}
+
+/** A pet with these assistant settings, read defensively (null: none). The same pet when nothing changed. */
+export function withAssistant(s: PetSave, assistant: unknown): PetSave {
+  const a = sanitizeAssistant(assistant)
+  if (JSON.stringify(a ?? null) === JSON.stringify(s.assistant ?? null)) return s
+  const { assistant: _old, ...rest } = s
+  void _old
+  return { ...rest, ...(a ? { assistant: a } : {}) }
 }
 
 /** A pet with its own motion specs, read defensively (null or nothing valid: as its species). The same pet when nothing changed. */
@@ -1215,6 +1330,13 @@ interface PetStore {
   // after a restart every account is "new" again, so the day's already-counted
   // tokens are re-baselined instead of being credited twice.
   seen: Record<string, number>
+  /**
+   * Food fed to assistant pets directly (feedOwn) that the shared samples have
+   * not caught up with yet, per flavour (deductOwed). Not persisted, like `seen`.
+   */
+  owed: Record<string, number>
+  /** An assistant pet's own turn: its tokens go to it alone (feedOwn). */
+  feedOwn: (bornAt: number, food: Record<string, number>, now?: number) => void
   load: () => Promise<void>
   /** Hand out a running seasonal event to the focused pet. */
   tick: (now?: number) => void
@@ -1328,6 +1450,7 @@ export const usePet = create<PetStore>((set, get) => {
     shown: [first.bornAt],
     loaded: false,
     seen: {},
+    owed: {},
     justLeveled: null,
     ackLevel: () => set({ justLeveled: null }),
     load: async () => {
@@ -1345,11 +1468,24 @@ export const usePet = create<PetStore>((set, get) => {
     // (no agent working) still gets its event.
     tick: (now = Date.now()) => onActive((p) => claimEvents(p, now)),
     sample: (totals, now = Date.now()) => {
-      const { deltas, seen } = sampleAccounts(get().seen, totals)
-      set({ seen })
+      const sampled = sampleAccounts(get().seen, totals)
+      // What assistant pets already ate of these tokens is not shared again.
+      const { deltas, owed } = deductOwed(sampled.deltas, get().owed)
+      set({ seen: sampled.seen, owed })
       const s = get()
       const { pets, leveled } = feedShown(s, deltas, now)
       if (pets === s.pets) return
+      if (leveled.length) set({ justLeveled: leveled[0] })
+      commit({ pets, active: s.active, shown: s.shown })
+    },
+    feedOwn: (bornAt, food, now = Date.now()) => {
+      const s = get()
+      if (!s.loaded) return
+      const { pets, leveled } = feedOwn(s, bornAt, food, now)
+      if (pets === s.pets) return
+      const owed = { ...s.owed }
+      for (const [f, v] of Object.entries(food)) if (v > 0) owed[f] = (owed[f] ?? 0) + Math.floor(v)
+      set({ owed })
       if (leveled.length) set({ justLeveled: leveled[0] })
       commit({ pets, active: s.active, shown: s.shown })
     },

@@ -33,6 +33,10 @@ pub struct Snapshot {
   /// The CLI binary changed on disk since this process started.
   pub updated: bool,
   pub idle_for: Duration,
+  /// How long this session may sit idle before it is parked (PARK_AFTER
+  /// unless the launch asked for less, as a pet assistant does). Zero reads
+  /// as PARK_AFTER.
+  pub park_after: Duration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,7 +62,8 @@ pub fn next(s: &Snapshot) -> Next {
   if s.updated {
     return Next::Restart(Why::Update);
   }
-  if !s.background && s.idle_for >= PARK_AFTER {
+  let after = if s.park_after.is_zero() { PARK_AFTER } else { s.park_after };
+  if !s.background && s.idle_for >= after {
     return Next::Park;
   }
   Next::Stay
@@ -102,6 +107,14 @@ mod tests {
     ] {
       assert_eq!(next(&blocker), Next::Stay, "{blocker:?}");
     }
+  }
+
+  #[test]
+  fn a_shorter_park_time_is_honoured() {
+    let short = Duration::from_secs(10 * 60);
+    assert_eq!(next(&Snapshot { park_after: short, ..idle(9) }), Next::Stay);
+    assert_eq!(next(&Snapshot { park_after: short, ..idle(10) }), Next::Park);
+    assert_eq!(next(&Snapshot { park_after: short, busy: true, ..idle(60) }), Next::Stay);
   }
 
   #[test]

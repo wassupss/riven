@@ -41,9 +41,21 @@ pub async fn env_defaults() -> CmdResult<Value> {
       "claudePath": resolve_claude(),
       // What a paired phone calls this machine (remote control).
       "hostname": hostname(),
+      // Where a pet assistant spanning several workspaces runs its CLI
+      // (state/petAssistants): riven's own folder, not the home folder (it
+      // would trust, and load the project files of, all of home).
+      "petHome": pet_home(),
     })
   })
   .await
+}
+
+/// userData/pet-assistants, made on first ask (owner only).
+fn pet_home() -> Option<String> {
+  use std::os::unix::fs::DirBuilderExt;
+  let dir = paths::user_data().join("pet-assistants");
+  std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).ok()?;
+  Some(dir.to_string_lossy().into_owned())
 }
 
 // ---- capture:save ----------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LayoutGrid, MoreHorizontal, Move, PawPrint, RotateCcw } from 'lucide-react'
 import { useT } from '../i18n'
-import { onNest, requestPet } from '../lib/petCommand'
+import { announceNest, onNest, requestPet } from '../lib/petCommand'
 import {
   applyCommand,
   briefOf,
@@ -23,6 +23,7 @@ import { Button, Select, Switch } from './ui/Controls'
 import { Creature } from './PetDevice'
 import PetSpeciesSettings from './PetSpeciesSettings'
 import PetLayoutEditor from './PetLayoutEditor'
+import PetAssistantSettings from './PetAssistantSettings'
 import { useUI } from '../state/ui'
 import { promptInput } from './promptInput'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -151,6 +152,14 @@ export default function PetNestSettings(): JSX.Element {
     if (motionOpen) motionRef.current?.scrollIntoView({ block: 'nearest' })
   }, [motionOpen])
 
+  // One pet's assistant settings (펫 비서), open below the list: by birthday,
+  // so it stays on that pet when the list changes.
+  const [assistFor, setAssistFor] = useState<number | null>(null)
+  const assistRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (assistFor !== null) assistRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [assistFor])
+
   const take = useCallback((b: NestBrief | null) => {
     if (!b) return
     noteBriefs(b)
@@ -197,6 +206,10 @@ export default function PetNestSettings(): JSX.Element {
     const { nest: next, result } = applyCommand(n, cmd, Date.now())
     if (next !== n) await window.api.config.save(FILE, next)
     take(briefOf(next))
+    // Nothing shows the pets to announce it: say it here, so the pet
+    // assistants' host (state/petAssistants) follows a pet switched off or
+    // let go while put away.
+    if (next !== n) announceNest(briefOf(next))
     say(result)
     return result
   }
@@ -239,6 +252,11 @@ export default function PetNestSettings(): JSX.Element {
               </span>
               <span className="set-rowdesc">
                 <span className="pet-nest-sub">{petSubtitle(p, t)}</span>
+                {p.assistant?.on && (
+                  <span className="pet-nest-shown assist" title={t('pet.assist.hint')}>
+                    {t('pet.assist.tag')}
+                  </span>
+                )}
                 {i === nest.active ? (
                   <span className="pet-nest-shown" title={t('pet.nest.focusHint')}>
                     {t('pet.nest.focused')}
@@ -335,6 +353,7 @@ export default function PetNestSettings(): JSX.Element {
           items={((): MenuItem[] => {
             const i = menu.i
             const items: MenuItem[] = [
+              { label: t('pet.assist.settings'), onClick: () => setAssistFor(nest.pets[i].bornAt) },
               { label: t('pet.nest.rename'), onClick: () => void rename(i) },
               { label: t('pet.nest.restart'), onClick: () => restart(i) },
               { label: '', onClick: () => {}, separator: true }
@@ -349,6 +368,21 @@ export default function PetNestSettings(): JSX.Element {
         />
       )}
       {note && <div className="set-note">{note}</div>}
+      {(() => {
+        const i = assistFor === null ? -1 : (nest?.pets.findIndex((p) => p.bornAt === assistFor) ?? -1)
+        const p = i >= 0 ? nest?.pets[i] : undefined
+        if (!p) return null
+        return (
+          <div ref={assistRef}>
+            <div className="section-label">{t('pet.assist.titleFor', { name: petTitle(p, t) })}</div>
+            <PetAssistantSettings
+              pet={p}
+              onClose={() => setAssistFor(null)}
+              onSave={async (assistant) => (await run({ op: 'assistant', ...ref(i), assistant })) === 'ok'}
+            />
+          </div>
+        )
+      })()}
       {layoutOpen && nest?.pets[nest.active] && (
         <div ref={layoutRef}>
           <div className="section-label">
