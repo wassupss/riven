@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import PetDevice from './components/PetDevice'
 import { loadSettings, getSettings } from './state/settings'
 import { applyTheme } from './state/themes'
+import { installNoNativeMenu } from './lib/noNativeMenu'
 import './styles.css'
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,8 @@ import './styles.css'
 // stylesheet paints a canvas on <body>. This marks the document so the shell can
 // float on nothing — without it the pet arrives in an opaque grey box.
 document.documentElement.classList.add('pet-window')
+// No WebKit right-click menu on the pet window either.
+installNoNativeMenu()
 
 void loadSettings().then(() => applyTheme(getSettings().theme))
 
