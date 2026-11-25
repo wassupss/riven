@@ -689,7 +689,7 @@ export default function CliChatPanel({
 // past QUIET_MS without a sign of life, for how long it has been silent.
 // The reply still streaming, revealed at the input rate instead of dumped whole
 // each time the preview updates (lib/textDrain.ts).
-function LivePreview({
+export function LivePreview({
   text,
   final,
   landed,

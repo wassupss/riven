@@ -3,6 +3,7 @@ import { ArrowUp, History, Plus, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { buildTurns, initialModel, reduce, type AgentProgress, type CliEvent } from '../lib/cliChat'
 import { TurnView } from '../dock/panels/clichat/TurnView'
+import { LivePreview } from '../dock/panels/CliChatPanel'
 import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from '../dock/panels/clichat/Cards'
 import TerminalPane from './TerminalPane'
 import {
@@ -68,21 +69,34 @@ export function AssistantCard({ anchor }: { anchor: 'attached' | 'detached' }): 
     []
   )
 
-  // Where it sits: left of the pet inside riven; the whole pet window when detached.
+  // Where it sits. Inside riven: the pet is at the card's bottom-right corner, a gap apart,
+  // and the card follows the pet when the pet's box changes (its size, or the window).
+  // A desktop pet: the whole pet window (the window itself is what moves with the pet).
   useLayoutEffect(() => {
     if (open === null) return
+    if (anchor === 'detached') {
+      setBox({ left: 0, top: 0, height: window.innerHeight })
+      return
+    }
     const place = (): void => {
-      if (anchor === 'detached') return setBox({ left: 0, top: 0, height: window.innerHeight })
+      const pet = document.querySelector('.pet-device') as HTMLElement | null
       const stage = document.querySelector('.pet-device .pet-stage') as HTMLElement | null
-      const r = stage?.getBoundingClientRect()
-      const height = Math.min(680, window.innerHeight - 16)
-      const top = Math.min(Math.max(8, r?.top ?? 8), window.innerHeight - height - 8)
-      const left = Math.max(8, (r?.left ?? ASSIST_CARD_W + 24) - ASSIST_CARD_W - CARD_GAP)
-      setBox({ left, top, height })
+      const r = (stage ?? pet)?.getBoundingClientRect()
+      const bottom = r ? r.bottom : window.innerHeight - 42
+      const height = Math.min(680, bottom - 8)
+      const top = Math.max(8, bottom - height)
+      const left = Math.max(8, (r?.left ?? window.innerWidth - 144) - CARD_GAP - ASSIST_CARD_W)
+      setBox({ left, top, height: bottom - top })
     }
     place()
     window.addEventListener('resize', place)
-    return () => window.removeEventListener('resize', place)
+    const pet = document.querySelector('.pet-device') as HTMLElement | null
+    const ro = pet && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null
+    if (pet) ro?.observe(pet)
+    return () => {
+      window.removeEventListener('resize', place)
+      ro?.disconnect()
+    }
   }, [open, anchor])
 
   // A desktop pet's window makes room for the card while it is open.
@@ -155,6 +169,9 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
 
   const turns = useMemo(() => buildTurns(model.items), [model.items])
   const shown = turns.length > TURNS_SHOWN ? turns.slice(-TURNS_SHOWN) : turns
+  // The reply in flight: streamed text drawn out toward the transcript's copy of it, at the
+  // end of the last turn (the same spot), the way the CLI chat pane does it.
+  const hiddenText = useMemo(() => new Set(model.previewHides), [model.previewHides])
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
@@ -171,6 +188,18 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
     void sendFromChat(bornAt, text)
   }
   const chatKey = key ?? `petchat-${Math.floor(bornAt)}`
+  const livePreview = model.preview ? (
+    <LivePreview
+      text={model.preview}
+      final={!state.busy}
+      landed={model.previewHides.length > 0}
+      onGrow={() => {
+        const el = scrollRef.current
+        if (el) el.scrollTop = el.scrollHeight
+      }}
+      onSettled={() => dispatch({ key: chatKey, kind: 'settle' } as unknown as CliEvent)}
+    />
+  ) : null
   const toTerminal = (): void => {
     if (!state.terminal) window.api.cliChat.terminal(chatKey, true)
   }
@@ -261,14 +290,17 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
                 {!gone && turns.length === 0 && !model.preview && (
                   <div className="cli-chat-empty">{t('pet.assist.chatEmpty')}</div>
                 )}
-                {shown.map((turn) => (
-                  <TurnView key={turn.key} chatKey={chatKey} turn={turn} agents={NO_AGENTS} />
+                {shown.map((turn, i) => (
+                  <TurnView
+                    key={turn.key}
+                    chatKey={chatKey}
+                    turn={turn}
+                    agents={NO_AGENTS}
+                    hidden={hiddenText}
+                    tail={i === shown.length - 1 && model.preview ? livePreview : undefined}
+                  />
                 ))}
-                {state.busy && model.preview && (
-                  <div className="chat-turn assistant cli-chat-assistant">
-                    <div className="chat-assistant-text cli-chat-preview">{model.preview}</div>
-                  </div>
-                )}
+                {!shown.length && model.preview && <div className="chat-turn assistant cli-chat-assistant">{livePreview}</div>}
                 {state.busy && !model.preview && <div className="cli-chat-note">{t('pet.assist.working')}</div>}
                 {state.menu ? (
                   <MenuCard chatKey={chatKey} menu={state.menu} plan={state.plan ?? null} onTerminal={toTerminal} />
