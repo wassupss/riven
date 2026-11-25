@@ -95,12 +95,12 @@ describe('one palette for the picture and its frames', () => {
     expect(r.grids[0][10][11]).toBe('1')
   })
   it('cells and rows round-trip', () => {
-    expect(rowsOfCells(N, cellsOfRows(rows(3)))).toEqual(rows(3))
+    expect(rowsOfCells(N, N, cellsOfRows(rows(3)))).toEqual(rows(3))
   })
 })
 
 describe('frames from the AI', () => {
-  const doc = { n: N, cells: cellsOfRows(photo.rows), palette: photo.palette }
+  const doc = { w: N, h: N, cells: cellsOfRows(photo.rows), palette: photo.palette }
   it('the prompt carries the grid and the contract', () => {
     const p = buildFramesPrompt(doc, gridRows(doc), '꼬리 흔드는 프레임 3장', 16)
     expect(p).toContain('꼬리 흔드는 프레임 3장')
@@ -117,8 +117,8 @@ describe('frames from the AI', () => {
     expect(r.fps).toBe(5)
     expect(r.palette).toEqual(['#111111', '#eeeeee', '#ff0000', '#00ff00'])
     expect(r.frames.length).toBe(3)
-    expect(rowsOfCells(N, r.frames[1])[10][13]).toBe('3')
-    expect(rowsOfCells(N, r.frames[0])).toEqual(rows(0))
+    expect(rowsOfCells(N, N, r.frames[1])[10][13]).toBe('3')
+    expect(rowsOfCells(N, N, r.frames[0])).toEqual(rows(0))
   })
   it('takes frames as {grid, palette} like a picture edit', () => {
     const f = (s: number): unknown => ({ grid: rows(s), palette: { '0': '#111111', '1': '#eeeeee' } })

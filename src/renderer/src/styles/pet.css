@@ -1207,6 +1207,16 @@
 .pet-px-N { fill: var(--pp-N); }
 .pet-px-O { fill: var(--pp-O); }
 .pet-px-P { fill: var(--pp-P); }
+.pet-px-Q { fill: var(--pp-Q); }
+.pet-px-R { fill: var(--pp-R); }
+.pet-px-S { fill: var(--pp-S); }
+.pet-px-T { fill: var(--pp-T); }
+.pet-px-U { fill: var(--pp-U); }
+.pet-px-V { fill: var(--pp-V); }
+.pet-px-W { fill: var(--pp-W); }
+.pet-px-X { fill: var(--pp-X); }
+.pet-px-Y { fill: var(--pp-Y); }
+.pet-px-Z { fill: var(--pp-Z); }
 .pet-lcd.pet-photo .pet-sprite {
   filter: none;
 }

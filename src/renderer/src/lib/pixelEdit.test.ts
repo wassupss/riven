@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   HISTORY_LIMIT,
+  MAX_COLORS,
   addColor,
   blankDoc,
   clearRect,
@@ -19,6 +20,7 @@ import {
   rectCells,
   rectOf,
   redo,
+  fitRows,
   replaceColor,
   stamp,
   stampAll,
@@ -60,7 +62,7 @@ describe('lineCells', () => {
   it('a fast drag painted through it leaves a solid stroke', () => {
     const n = 8
     const c = new Uint8Array(n * n)
-    stampAll(c, n, lineCells(0, 0, 7, 0), 1, 1)
+    stampAll(c, n, n, lineCells(0, 0, 7, 0), 1, 1)
     expect(show(c, n)[0]).toBe('11111111')
   })
 })
@@ -71,7 +73,7 @@ describe('rectCells', () => {
     const keys = new Set(pts.map((p) => p.join(',')))
     expect(keys.size).toBe(pts.length)
     const c = new Uint8Array(25)
-    stampAll(c, 5, pts, 1, 2)
+    stampAll(c, 5, 5, pts, 1, 2)
     expect(show(c, 5)).toEqual(['.....', '2222.', '2..2.', '2222.', '.....'])
   })
   it('a single row or dot', () => {
@@ -84,25 +86,25 @@ describe('stamp', () => {
   it('sizes 1, 2, 3 and the edges', () => {
     const n = 5
     let c = new Uint8Array(n * n)
-    stamp(c, n, 2, 2, 3, 1)
+    stamp(c, n, n, 2, 2, 3, 1)
     expect(show(c, n)).toEqual(['.....', '.111.', '.111.', '.111.', '.....'])
     c = new Uint8Array(n * n)
-    stamp(c, n, 0, 0, 2, 1)
+    stamp(c, n, n, 0, 0, 2, 1)
     expect(show(c, n).slice(0, 2)).toEqual(['11...', '11...'])
     c = new Uint8Array(n * n)
-    expect(stamp(c, n, 0, 0, 3, 1)).toBe(true)
+    expect(stamp(c, n, n, 0, 0, 3, 1)).toBe(true)
     expect(countDots(c)).toBe(4)
-    expect(stamp(c, n, 0, 0, 3, 1)).toBe(false)
+    expect(stamp(c, n, n, 0, 0, 3, 1)).toBe(false)
   })
 
   it('mirrors left and right', () => {
     const n = 6
     const c = new Uint8Array(n * n)
-    stamp(c, n, 1, 0, 1, 3, true)
+    stamp(c, n, n, 1, 0, 1, 3, true)
     expect(show(c, n)[0]).toBe('.3..3.')
     expect(mirrorX(n, 1)).toBe(4)
     const d = new Uint8Array(n * n)
-    stamp(d, n, 0, 0, 2, 1, true)
+    stamp(d, n, n, 0, 0, 2, 1, true)
     expect(show(d, n)[0]).toBe('11..11')
   })
 })
@@ -110,27 +112,27 @@ describe('stamp', () => {
 describe('floodFill', () => {
   it('fills the four-connected region only (a diagonal does not leak)', () => {
     const c = draw(['.1..', '1...', '....', '....'])
-    expect(floodFill(c, 4, 0, 0, 2)).toBe(true)
+    expect(floodFill(c, 4, 4, 0, 0, 2)).toBe(true)
     expect(show(c, 4)).toEqual(['21..', '1...', '....', '....'])
   })
 
   it('fills a closed shape inside and leaves the outside', () => {
     const c = draw(['.....', '.111.', '.1.1.', '.111.', '.....'])
-    floodFill(c, 5, 2, 2, 3)
+    floodFill(c, 5, 5, 2, 2, 3)
     expect(show(c, 5)).toEqual(['.....', '.111.', '.131.', '.111.', '.....'])
   })
 
   it('does nothing on the same colour, and mirrors', () => {
     const c = draw(['11..', '....', '....', '....'])
-    expect(floodFill(c, 4, 0, 0, 1)).toBe(false)
+    expect(floodFill(c, 4, 4, 0, 0, 1)).toBe(false)
     const m = draw(['1..2', '1..2', '....', '....'])
-    floodFill(m, 4, 0, 0, 3, true)
+    floodFill(m, 4, 4, 0, 0, 3, true)
     expect(show(m, 4).slice(0, 2)).toEqual(['3..3', '3..3'])
   })
 
   it('erases a region with 0', () => {
     const c = draw(['22..', '2...', '....', '...1'])
-    floodFill(c, 4, 0, 0, 0)
+    floodFill(c, 4, 4, 0, 0, 0)
     expect(countDots(c)).toBe(1)
   })
 })
@@ -138,11 +140,11 @@ describe('floodFill', () => {
 describe('pieces', () => {
   it('corners join, gaps separate, biggest first', () => {
     const c = draw(['11...', '..1..', '.....', '...11', '...11'])
-    const p = piecesOf(c, 5)
+    const p = piecesOf(c, 5, 5)
     expect(p.map((x) => x.length)).toEqual([4, 3])
-    expect(keepBiggest(c, 5)).toBe(true)
+    expect(keepBiggest(c, 5, 5)).toBe(true)
     expect(show(c, 5)).toEqual(['.....', '.....', '.....', '...11', '...11'])
-    expect(keepBiggest(c, 5)).toBe(false)
+    expect(keepBiggest(c, 5, 5)).toBe(false)
   })
 })
 
@@ -151,7 +153,7 @@ describe('palette', () => {
     const r = addColor(['#000000'], '#FF0000')
     expect(r).toEqual({ palette: ['#000000', '#ff0000'], index: 1 })
     expect(addColor(['#000000', '#ff0000'], '#ff0000')?.index).toBe(1)
-    const full = Array.from({ length: 16 }, (_, i) => `#0000${i.toString(16).padStart(2, '0')}`)
+    const full = Array.from({ length: MAX_COLORS }, (_, i) => `#0000${i.toString(16).padStart(2, '0')}`)
     expect(addColor(full, '#123456')).toBeNull()
     expect(addColor(full, '#00000f')?.index).toBe(15)
   })
@@ -210,24 +212,32 @@ describe('history', () => {
 })
 
 describe('docs and pictures', () => {
+  it('keeps a tall picture tall and a wide one wide', () => {
+    const rows = ['..1.', '..1.', '.111', '.111', '.111', '.111']
+    const d = docOfPhoto({ palette: ['#000000'], rows })
+    expect([d.w, d.h]).toEqual([4, 6])
+    expect(photoOfDoc(d)).toEqual({ palette: ['#000000'], rows })
+  })
+
   it('round-trips a picture', () => {
     const rows = Array.from({ length: 32 }, (_, y) => (y === 3 ? '..01' + '.'.repeat(28) : '.'.repeat(32)))
     const d = docOfPhoto({ palette: ['#000000', '#ffffff'], rows })
-    expect(d.n).toBe(32)
+    expect(d.w).toBe(32)
+    expect(d.h).toBe(32)
     expect(countDots(d.cells)).toBe(2)
     expect(photoOfDoc(d)).toEqual({ palette: ['#000000', '#ffffff'], rows })
-    const big = photoOfDoc(blankDoc(48, ['#000000']))
+    const big = photoOfDoc(blankDoc(48, 48, ['#000000']))
     expect(big.size).toBe(48)
     expect(big.rows).toHaveLength(48)
   })
 
   it('a picture drawn on a blank canvas becomes a whole design', () => {
-    const doc = blankDoc(32, ['#2d2a32', '#f2c38b', '#ffffff'])
+    const doc = blankDoc(32, 32, ['#2d2a32', '#f2c38b', '#ffffff'])
     // A body, a head and two separate ears floating above.
-    for (let y = 12; y < 28; y++) for (let x = 8; x < 24; x++) stamp(doc.cells, 32, x, y, 1, 2)
-    for (let y = 14; y < 18; y++) stamp(doc.cells, 32, 11, y, 1, 3, true)
-    stamp(doc.cells, 32, 9, 8, 2, 1, true)
-    expect(piecesOf(doc.cells, 32).length).toBe(3)
+    for (let y = 12; y < 28; y++) for (let x = 8; x < 24; x++) stamp(doc.cells, 32, 32, x, y, 1, 2)
+    for (let y = 14; y < 18; y++) stamp(doc.cells, 32, 32, 11, y, 1, 3, true)
+    stamp(doc.cells, 32, 32, 9, 8, 2, 1, true)
+    expect(piecesOf(doc.cells, 32, 32).length).toBe(3)
     const pic = photoOfDoc(doc)
     const photo = finishPhoto(
       pic.rows.map((r) => [...r]),
@@ -244,8 +254,8 @@ describe('docs and pictures', () => {
   })
 
   it('too few dots is no picture', () => {
-    const doc = blankDoc(32, ['#000000'])
-    stamp(doc.cells, 32, 5, 5, 3, 1)
+    const doc = blankDoc(32, 32, ['#000000'])
+    stamp(doc.cells, 32, 32, 5, 5, 3, 1)
     const pic = photoOfDoc(doc)
     expect(finishPhoto(pic.rows.map((r) => [...r]), pic.palette)).toBeNull()
   })
@@ -257,7 +267,7 @@ describe('moving and clearing a part of the picture', () => {
     const cells = new Uint8Array(n * n)
     cells[0] = 1 // top-left
     cells[1 * n + 3] = 2 // right edge
-    moveRect(cells, n, fullRect(n), 1, 1)
+    moveRect(cells, n, n, fullRect(n, n), 1, 1)
     expect(cells[1 * n + 1]).toBe(1)
     // the dot at x=3 would go to x=4: gone
     expect(Array.from(cells).filter((v) => v === 2)).toHaveLength(0)
@@ -268,7 +278,7 @@ describe('moving and clearing a part of the picture', () => {
     const cells = new Uint8Array(n * n)
     cells[0] = 1
     cells[3 * n + 3] = 2
-    moveRect(cells, n, { x0: 0, y0: 0, x1: 1, y1: 1 }, 2, 0)
+    moveRect(cells, n, n, { x0: 0, y0: 0, x1: 1, y1: 1 }, 2, 0)
     expect(cells[0]).toBe(0)
     expect(cells[2]).toBe(1)
     expect(cells[3 * n + 3]).toBe(2)
@@ -283,5 +293,16 @@ describe('moving and clearing a part of the picture', () => {
 
   it('makes a rectangle from two corners in either order', () => {
     expect(rectOf(3, 1, 1, 3)).toEqual({ x0: 1, y0: 1, x1: 3, y1: 3 })
+  })
+})
+
+describe('changing a finished picture grid', () => {
+  it('grows by repeating dots and shrinks by dropping them', () => {
+    expect(fitRows(['01', '23'], 4, 4)).toEqual(['....', '.01.', '.23.', '....'])
+    expect(fitRows(['0011', '2233', '4455', '6677'], 2, 2)).toEqual(['23', '45'])
+  })
+  it('takes a new width and height on their own (a tall picture from a square one)', () => {
+    expect(fitRows(['01', '23'], 2, 2)).toEqual(['01', '23'])
+    expect(fitRows(['0'], 2, 2)).toEqual(['0.', '..'])
   })
 })

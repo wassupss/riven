@@ -75,15 +75,17 @@ export {
   PHOTO,
   PHOTO_SIZES,
   PHOTO_MAX_COLORS,
+  PHOTO_PICTURE_COLORS,
   PHOTO_CHARS,
   MIN_PHOTO_CELLS,
-  photoSizeOf,
+  photoDimsOf,
   minPhotoCells,
   photoLine,
+  type PhotoDims,
   type PhotoSize,
   type PhotoArt
 } from '../lib/petPhotoGrid'
-import { PHOTO, PHOTO_SIZES, PHOTO_MAX_COLORS, PHOTO_CHARS, MIN_PHOTO_CELLS, photoSizeOf, minPhotoCells, photoLine, type PhotoSize, type PhotoArt } from '../lib/petPhotoGrid'
+import { PHOTO, PHOTO_SIZES, PHOTO_MAX_COLORS, PHOTO_CHARS, MIN_PHOTO_CELLS, photoDimsOf, minPhotoCells, photoLine, type PhotoDims, type PhotoSize, type PhotoArt } from '../lib/petPhotoGrid'
 
 export type CustomSpeciesId = `u-${string}`
 const ID_RE = /^u-[a-z0-9]{4,20}$/
@@ -122,20 +124,22 @@ export function sanitizePhoto(raw: unknown): PhotoArt | null {
     if (!HEX_RE.test(v)) return null
     palette.push(v)
   }
-  // Only the grids a picture can be made at; none given is the 32 of old.
-  const size = o.size === undefined ? PHOTO : o.size
-  if (!(PHOTO_SIZES as readonly unknown[]).includes(size)) return null
-  const n = size as PhotoSize
-  if (!Array.isArray(o.rows) || o.rows.length !== n) return null
+  // The rows say the grid: width and height each one of the grids a picture can be made at.
+  if (!Array.isArray(o.rows) || !o.rows.length || typeof o.rows[0] !== 'string') return null
+  const h = o.rows.length
+  const w = (o.rows[0] as string).length
+  if (!(PHOTO_SIZES as readonly unknown[]).includes(w) || !(PHOTO_SIZES as readonly unknown[]).includes(h)) return null
+  // A size field, when there is one (every square picture of 48 or 64 has it), must agree with the rows.
+  if (o.size !== undefined && (w !== h || o.size !== w)) return null
   const ok = '.' + PHOTO_CHARS.slice(0, palette.length)
   const rows: string[] = []
   for (const row of o.rows) {
-    if (typeof row !== 'string' || row.length !== n) return null
+    if (typeof row !== 'string' || row.length !== w) return null
     for (const ch of row) if (!ok.includes(ch)) return null
     rows.push(row)
   }
-  if (cellsOf(rows) < minPhotoCells(n)) return null
-  return n === PHOTO ? { palette, rows } : { palette, rows, size: n }
+  if (cellsOf(rows) < minPhotoCells(w, h)) return null
+  return w === h && w !== PHOTO ? { palette, rows, size: w as PhotoSize } : { palette, rows }
 }
 
 /** A design read defensively: a hand-edited file or a forged code must never draw garbage. Null when unusable. */
@@ -232,19 +236,25 @@ export function packDesign(d: CustomDesign): unknown[] {
  * null when too little is left to be a picture.
  */
 export function photoAt32(p: PhotoArt): PhotoArt | null {
-  const n = photoSizeOf(p)
-  if (n === PHOTO) return p
-  const k = n / PHOTO
+  const { w, h } = photoDimsOf(p)
+  if (w === PHOTO && h === PHOTO) return p
+  // One scale for the whole picture: its longer side becomes 32, the other side is centred in the box.
+  const f = PHOTO / Math.max(w, h)
+  const tw = Math.max(1, Math.round(w * f))
+  const th = Math.max(1, Math.round(h * f))
+  const ox = Math.floor((PHOTO - tw) / 2)
+  const oy = Math.floor((PHOTO - th) / 2)
+  const kx = w / tw
+  const ky = h / th
   const rgbs = p.palette.map(hexToRgb)
   const labs = rgbs.map((c) => labOf(c[0], c[1], c[2]))
-  const rows: string[] = []
-  for (let j = 0; j < PHOTO; j++) {
-    let row = ''
-    for (let i = 0; i < PHOTO; i++) {
-      const fx0 = i * k
-      const fx1 = fx0 + k
-      const fy0 = j * k
-      const fy1 = fy0 + k
+  const box: string[][] = Array.from({ length: PHOTO }, () => Array(PHOTO).fill('.'))
+  for (let j = 0; j < th; j++) {
+    for (let i = 0; i < tw; i++) {
+      const fx0 = i * kx
+      const fx1 = fx0 + kx
+      const fy0 = j * ky
+      const fy1 = fy0 + ky
       let area = 0
       let r = 0
       let g = 0
@@ -261,10 +271,8 @@ export function photoAt32(p: PhotoArt): PhotoArt | null {
           g += c[1] * a
           b += c[2] * a
         }
-      if (area < k * k * 0.5) {
-        row += '.'
-        continue
-      }
+      // Lit where at least half of its share is lit; its colour is the nearest palette colour (Lab) to the mean there.
+      if (area < kx * ky * 0.5) continue
       const lab = labOf(r / area, g / area, b / area)
       let best = 0
       let bestD = Infinity
@@ -275,11 +283,10 @@ export function photoAt32(p: PhotoArt): PhotoArt | null {
           best = ci
         }
       })
-      row += PHOTO_CHARS[best]
+      box[oy + j][ox + i] = PHOTO_CHARS[best]
     }
-    rows.push(row)
   }
-  return sanitizePhoto({ palette: p.palette, rows })
+  return sanitizePhoto({ palette: p.palette, rows: box.map((row) => row.join('')) })
 }
 
 function unpackPhoto(raw: unknown): PhotoArt | undefined {

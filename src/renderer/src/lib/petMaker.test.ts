@@ -94,7 +94,7 @@ describe('autoCrop', () => {
     const img = canvas(300, 200, (x, y) => [232 + grain(x, y) / 3, 234, 236])
     paint(img, (x, y) => (x - 230) ** 2 / 30 ** 2 + (y - 120) ** 2 / 30 ** 2 <= 1, () => [200, 60, 70])
     const sq = cropSquare(img, autoCrop(img))
-    const d = faithfulDesignFromPhoto(sq, foregroundOf(backgroundMask(sq, DEFAULT_TOLERANCE)), 'x', PHOTO_MAX_COLORS, PHOTO)
+    const d = faithfulDesignFromPhoto(sq, foregroundOf(backgroundMask(sq, DEFAULT_TOLERANCE)), 'x', PHOTO_MAX_COLORS, { w: PHOTO, h: PHOTO })
     expect(d?.photo?.rows.length).toBe(PHOTO)
   })
 

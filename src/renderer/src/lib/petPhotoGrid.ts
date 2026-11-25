@@ -7,36 +7,54 @@ export const PHOTO = 32
 /**
  * The grids a picture can be made at. The pet is always drawn 32 css pixels
  * square, so 48 is 2/3 of a css pixel a dot and 64 half of one (a device
- * pixel each on a Retina screen): more detail in the same room.
+ * pixel each on a Retina screen): more detail in the same room. 96 and 128
+ * are for a picture drawn bigger than the pet is shown, and are scaled down
+ * to it like the others.
  */
-export const PHOTO_SIZES = [32, 48, 64] as const
+export const PHOTO_SIZES = [32, 48, 64, 96, 128] as const
 export type PhotoSize = (typeof PHOTO_SIZES)[number]
-export const PHOTO_MAX_COLORS = 16
+/**
+ * Colours a picture may use: one drawn letter each (petCustomArt PHOTO_DOT,
+ * A..Z), so 26. Pictures saved with 16 or fewer read the same.
+ */
+export const PHOTO_MAX_COLORS = 26
+/** Colours a photo is worked down to by default (the maker's 8, 12 or 16 choice). */
+export const PHOTO_PICTURE_COLORS = 16
 /** A dot of the picture: '.' is air, otherwise the index of its colour in `palette`. */
-export const PHOTO_CHARS = '0123456789abcdef'
+export const PHOTO_CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 /** A 32x32 picture with fewer dots than this is a speck (a bigger grid scales it by area). */
 export const MIN_PHOTO_CELLS = 60
 
 export interface PhotoArt {
-  /** Up to 16 '#rrggbb' colours. */
+  /** Up to PHOTO_MAX_COLORS '#rrggbb' colours. */
   palette: string[]
-  /** `size` rows of `size` characters: '.' or a PHOTO_CHARS index into `palette`. */
+  /**
+   * `h` rows of `w` characters: '.' or a PHOTO_CHARS index into `palette`.
+   * The grid need not be square: a tall picture has more rows than columns.
+   */
   rows: string[]
   /**
-   * The grid, 48 or 64. Left out at 32, which is what every picture made
-   * before the choice came in is, so their data reads and writes unchanged.
+   * A square grid of 48 to 128, kept for the riven that reads it. Left out at
+   * 32, and on every picture that is not square (its rows say its size).
    */
   size?: PhotoSize
 }
 
-/** A picture's grid (32 when it does not say). */
-export const photoSizeOf = (p: PhotoArt): PhotoSize => p.size ?? PHOTO
+/** A grid's width and height in dots. */
+export interface PhotoDims {
+  w: number
+  h: number
+}
 
-/** The fewest dots a picture of `size` may have: MIN_PHOTO_CELLS, by area. */
-export const minPhotoCells = (size: number): number => Math.round((MIN_PHOTO_CELLS * size * size) / (PHOTO * PHOTO))
+/** A picture's grid, read from its rows (32 square when it has none). */
+export const photoDimsOf = (p: PhotoArt): PhotoDims => ({ w: p.rows[0]?.length ?? PHOTO, h: p.rows.length || PHOTO })
+
+/** The fewest dots a picture may have: MIN_PHOTO_CELLS, by area (a 32 by 32 is the reference). */
+export const minPhotoCells = (w: number, h: number = w): number => Math.round((MIN_PHOTO_CELLS * w * h) / (PHOTO * PHOTO))
 
 /**
  * How many dots thick a picture's outline is drawn, and so how much air it
- * keeps round itself: about a css pixel, never less than a dot.
+ * keeps round itself: about a css pixel, never less than a dot. A rectangle
+ * takes its shorter side (the subject is square and lives in it).
  */
 export const photoLine = (size: number): number => Math.max(1, Math.floor(size / PHOTO))

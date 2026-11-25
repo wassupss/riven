@@ -4,7 +4,7 @@ import {
   PHOTO,
   PHOTO_CHARS,
   photoLine,
-  photoSizeOf,
+  photoDimsOf,
   type CustomDesign
 } from '../state/petSpecies'
 import type { Sprite } from './petSprites'
@@ -177,24 +177,31 @@ export function customBody(d: CustomDesign): Sprite {
 // ---------------------------------------------------------------------------
 
 /** The drawn characters of the picture's colours: palette index i is PHOTO_DOT[i]. Never a palette letter. */
-export const PHOTO_DOT = 'ABCDEFGHIJKLMNOP'
+export const PHOTO_DOT = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 const photoCache = new WeakMap<CustomDesign, string[]>()
 
 /**
- * The picture on its own grid (photoSizeOf: 32, 48 or 64 square): the
- * colours as PHOTO_DOT characters and 'o' its outline. Cached; the rows are
- * shared, so a caller that changes them copies them first.
+ * The picture on its own square grid (its longer side: 32, 48 or 64): the
+ * colours as PHOTO_DOT characters and 'o' its outline. A picture that is not
+ * square sits centred in that square, air on the short sides. Cached; the
+ * rows are shared, so a caller that changes them copies them first.
  */
 export function photoGrid(d: CustomDesign): string[] {
   const p = d.photo
   if (!p) return Array(PHOTO).fill('.'.repeat(PHOTO))
   const hit = photoCache.get(d)
   if (hit) return hit
-  const n = photoSizeOf(p)
+  const { w, h } = photoDimsOf(p)
+  const n = Math.max(w, h)
+  const ox = Math.floor((n - w) / 2)
+  const oy = Math.floor((n - h) / 2)
   const g: string[][] = Array.from({ length: n }, (_, y) =>
     Array.from({ length: n }, (_, x) => {
-      const ch = p.rows[y]?.[x] ?? '.'
+      const sx = x - ox
+      const sy = y - oy
+      if (sx < 0 || sy < 0 || sx >= w || sy >= h) return '.'
+      const ch = p.rows[sy]?.[sx] ?? '.'
       return ch === '.' ? '.' : (PHOTO_DOT[PHOTO_CHARS.indexOf(ch)] ?? '.')
     })
   )

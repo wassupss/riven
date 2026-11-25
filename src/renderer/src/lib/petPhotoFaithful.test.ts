@@ -22,7 +22,7 @@ import {
   minPhotoCells,
   photoAt32,
   photoLine,
-  photoSizeOf,
+  photoDimsOf,
   hexToRgb,
   noteDesign,
   packDesign,
@@ -267,7 +267,7 @@ describe('sanitizePhoto', () => {
 
   it.each([
     ['no palette', { ...ok, palette: [] }],
-    ['17 colours', { ...ok, palette: Array(17).fill('#000000') }],
+    ['27 colours', { ...ok, palette: Array(27).fill('#000000') }],
     ['a bad colour', { ...ok, palette: ['#12345', '#445566'] }],
     ['31 rows', { ...ok, rows: ok.rows.slice(1) }],
     ['a short row', { ...ok, rows: [...ok.rows.slice(0, 10), '...', ...ok.rows.slice(11)] }],
@@ -355,13 +355,13 @@ describe('a faithful picture at 32, 48 and 64', () => {
   const made = Object.fromEntries(
     PHOTO_SIZES.map((n) => {
       const { sq, fg } = cutout(catPhoto())
-      return [n, faithfulDesignFromPhoto(sq, fg, `cat${n}`, 16, n)!]
+      return [n, faithfulDesignFromPhoto(sq, fg, `cat${n}`, 16, { w: n, h: n })!]
     })
   ) as Record<(typeof PHOTO_SIZES)[number], CustomDesign>
 
   it.each(PHOTO_SIZES)('%i: a valid picture of that size, in one piece, with room for its outline', (n) => {
     const p = made[n].photo!
-    expect(photoSizeOf(p)).toBe(n)
+    expect(photoDimsOf(p).w).toBe(n)
     // 32 says nothing of its size, as every picture from before the choice.
     expect('size' in p).toBe(n !== PHOTO)
     expect(p.rows).toHaveLength(n)
@@ -406,7 +406,7 @@ describe('a faithful picture at 32, 48 and 64', () => {
     expect(hex).toHaveLength(d.photo!.palette.length * 6)
     const back = unpackDesign(JSON.parse(JSON.stringify(packed)))!
     expect(back.photo).toBeTruthy()
-    expect(photoSizeOf(back.photo!)).toBe(PHOTO)
+    expect(photoDimsOf(back.photo!).w).toBe(PHOTO)
     expect('size' in back.photo!).toBe(false)
     expect(back.photo!.palette).toEqual(d.photo!.palette)
     expect(back.photo).toEqual(photoAt32(d.photo!))
@@ -467,7 +467,24 @@ describe('a faithful picture at 32, 48 and 64', () => {
     it.each(PHOTO_SIZES)('accepts %i with rows to match', (n) => {
       const p = sanitizePhoto(square(n, n))!
       expect(p).not.toBeNull()
-      expect(photoSizeOf(p)).toBe(n)
+      expect(photoDimsOf(p).w).toBe(n)
+    })
+
+    it('the rows say the grid: a square 64 is valid without a size field, and a tall picture is too', () => {
+      const sq64 = sanitizePhoto(square(64))
+      expect(sq64).not.toBeNull()
+      // A square 64 gets the size field its older readers know; a tall one has none.
+      expect(sq64!.size).toBe(64)
+      const tall = sanitizePhoto({ palette: ['#112233'], rows: Array.from({ length: 64 }, (_, y) => (y > 10 && y < 50 ? '..' + '0'.repeat(28) + '..' : '.'.repeat(32))) })
+      expect(tall).not.toBeNull()
+      expect(photoDimsOf(tall!)).toEqual({ w: 32, h: 64 })
+    })
+
+    it('a square 128 is a valid picture, and its size field says 128', () => {
+      const sq128 = sanitizePhoto(square(128))
+      expect(sq128).not.toBeNull()
+      expect(sq128!.size).toBe(128)
+      expect(photoDimsOf(sq128!)).toEqual({ w: 128, h: 128 })
     })
 
     it('an old 32 picture (no size) comes back exactly as it was; a 32 that says so is the same picture', () => {
@@ -482,10 +499,9 @@ describe('a faithful picture at 32, 48 and 64', () => {
       ['16', square(16, 16)],
       ['a size as text', square(48, '48')],
       ['48 with 32 rows', square(32, 48)],
-      ['no size with 64 rows', square(64)],
       ['64 with 48 rows', square(48, 64)],
       ['64 with a short row', { ...(square(64, 64) as PhotoArt), rows: [...(square(64, 64) as PhotoArt).rows.slice(0, 63), '.'.repeat(48)] }],
-      ['64 with 17 colours', { ...(square(64, 64) as PhotoArt), palette: Array(17).fill('#000000') }],
+      ['64 with 27 colours', { ...(square(64, 64) as PhotoArt), palette: Array(27).fill('#000000') }],
       ['a speck at 64', { palette: ['#000000'], rows: Array.from({ length: 64 }, (_, y) => (y === 9 ? '0'.repeat(minPhotoCells(64) - 1).padEnd(64, '.') : '.'.repeat(64))), size: 64 }]
     ])('rejects %s', (_, raw) => {
       expect(sanitizePhoto(raw)).toBeNull()
@@ -556,5 +572,19 @@ describe('a faithful picture at 32, 48 and 64', () => {
       for (const m of [...at(10).front, ...halo, ...at(50).back])
         expect(under.has(`${m.x},${m.y}`), `at ${m.x},${m.y}`).toBe(false)
     })
+  })
+})
+
+describe('a tall picture at the pet 32', () => {
+  it('is a 32 box with the picture centred and its aspect kept (air above and below)', () => {
+    // 32 wide, 64 tall: the subject sits in rows 8..55 and is scaled by half.
+    const rows = Array.from({ length: 64 }, (_, y) => (y >= 8 && y < 56 ? '..' + '0'.repeat(28) + '..' : '.'.repeat(32)))
+    const big = sanitizePhoto({ palette: ['#112233'], rows })!
+    expect(photoDimsOf(big)).toEqual({ w: 32, h: 64 })
+    const small = photoAt32(big)!
+    expect(photoDimsOf(small)).toEqual({ w: 32, h: 32 })
+    expect(small.rows[0]).toBe('.'.repeat(32))
+    expect(small.rows[31]).toBe('.'.repeat(32))
+    expect(small.rows.join('').replace(/\./g, '').length).toBeGreaterThan(0)
   })
 })

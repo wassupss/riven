@@ -65,6 +65,7 @@ import {
   NAME_MAX,
   PHOTO,
   PHOTO_MAX_COLORS,
+  PHOTO_PICTURE_COLORS,
   PHOTO_SIZES,
   type PhotoArt,
   ROLE_COLOR,
@@ -76,7 +77,8 @@ import {
   minPhotoCells,
   newCustomId,
   noteDesign,
-  photoSizeOf,
+  photoDimsOf,
+  type PhotoDims,
   sanitizeDesign,
   useCustomSpecies,
   type CustomDesign,
@@ -100,7 +102,7 @@ import {
   type Crop,
   type Rgba
 } from '../lib/petPhoto'
-import { blankDoc, countDots, docOfPhoto, photoOfDoc, type PixelDoc } from '../lib/pixelEdit'
+import { blankDoc, countDots, docOfPhoto, fitRows, photoOfDoc, type PixelDoc } from '../lib/pixelEdit'
 import { nextName } from '../lib/petMaker'
 
 // ---------------------------------------------------------------------------
@@ -181,8 +183,8 @@ type BrushSize = keyof typeof BRUSH_SIZES
 const STARTER = ['#2d2a32', '#ffffff', '#f2c38b', '#c47a45', '#f49ac1', '#6fa8dc', '#8bc34a', '#ffd54f']
 
 /** A blank canvas of `n` dots: a picture with nothing drawn yet (its 12x12 is made from it on save). */
-function blankDesign(n: PhotoSize): CustomDesign {
-  const doc = blankDoc(n, STARTER)
+function blankDesign(dims: PhotoDims): CustomDesign {
+  const doc = blankDoc(dims.w, dims.h, STARTER)
   return {
     name: '',
     colors: { body: '#f2c38b', shade: '#c47a45', highlight: '#fbe3c4', accent: '#6fa8dc', white: '#ffffff' },
@@ -267,15 +269,16 @@ const samePalette = (a: string[], b: string[]): boolean => a.length === b.length
 /** A frame (or the picture) as a small canvas. */
 function FrameThumb({ rows, palette, label }: { rows: string[]; palette: string[]; label: string }): JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null)
-  const n = rows.length
+  const h = rows.length
+  const w = rows[0]?.length ?? 0
   useEffect(() => {
     const ctx = ref.current?.getContext('2d')
     if (!ctx) return
-    const img = ctx.createImageData(n, n)
-    img.data.set(rgbaOfDoc({ n, cells: cellsOfRows(rows), palette }, hexToRgb))
+    const img = ctx.createImageData(w, h)
+    img.data.set(rgbaOfDoc({ w, h, cells: cellsOfRows(rows), palette }, hexToRgb))
     ctx.putImageData(img, 0, 0)
-  }, [rows, palette, n])
-  return <canvas ref={ref} width={n} height={n} className="pm-pixels pmo-thumb-img" aria-label={label} />
+  }, [rows, palette, w, h])
+  return <canvas ref={ref} width={w} height={h} className="pm-pixels pmo-thumb-img" aria-label={label} />
 }
 
 /** A pet of the design, as a small picture, with what its level has earned it. */
@@ -374,9 +377,9 @@ export default function PetMaker({
   const [brushSize, setBrushSize] = useState<BrushSize>('m')
   const [view, setView] = useState<View>('crop')
   const [convOpen, setConvOpen] = useState(true)
-  const [colorCount, setColorCount] = useState<number>(PHOTO_MAX_COLORS)
+  const [colorCount, setColorCount] = useState<number>(PHOTO_PICTURE_COLORS)
   // The picture's grid: more dots, more detail in the same 32 css pixels.
-  const [res, setRes] = useState<PhotoSize>(editing?.photo ? photoSizeOf(editing.photo) : PHOTO)
+  const [res, setRes] = useState<PhotoDims>(editing?.photo ? photoDimsOf(editing.photo) : { w: PHOTO, h: PHOTO })
   // Bumped to remake the picture from the photo when nothing else changed ("덮어쓰기", "사진대로 되돌리기").
   const [regen, setRegen] = useState(0)
 
@@ -407,6 +410,8 @@ export default function PetMaker({
   // ---- the questions and what happened ----
   // "직접 그린 내용이 사라져요", asked in place before the picture is remade.
   const [ask, setAsk] = useState<{ run: () => void } | null>(null)
+  /** Why the last canvas change was refused (a crop that would leave a speck). */
+  const [sizeNote, setSizeNote] = useState<string | null>(null)
   const [closeAsk, setCloseAsk] = useState(false)
   // Changed since it was opened or saved.
   const [dirty, setDirty] = useState(false)
@@ -531,7 +536,7 @@ export default function PetMaker({
     }
     guarded(use)
   }
-  const toBlank = (size: PhotoSize = PHOTO): void => {
+  const toBlank = (size: PhotoDims = { w: PHOTO, h: PHOTO }): void => {
     setSource(null)
     setBlank(true)
     setRes(size)
@@ -649,7 +654,7 @@ export default function PetMaker({
         : rebaseAll(old.rows, frames, old.palette, doc.palette)
       const next: FrameMap = { ...(r.frames ?? {}) }
       const cur = next[moSit] ?? set
-      next[moSit] = { fps: cur.fps, frames: cur.frames.map((g, i) => (i === frameSel ? rowsOfCells(doc.n, doc.cells) : g)) }
+      next[moSit] = { fps: cur.fps, frames: cur.frames.map((g, i) => (i === frameSel ? rowsOfCells(doc.w, doc.h, doc.cells) : g)) }
       framesU.replace(next)
       setDraft({ ...draft, photo: { ...old, rows: r.rows, palette: r.palette } })
       if (r.palette.length !== doc.palette.length) reseed({ ...doc, palette: r.palette })
@@ -681,7 +686,7 @@ export default function PetMaker({
     const rows = i === null ? p.rows : fm?.[sit]?.frames[i]
     if (!rows) return
     setFrameSel(i)
-    reseed({ n: rows.length, cells: cellsOfRows(rows), palette: [...p.palette] })
+    reseed({ w: rows[0]?.length ?? 0, h: rows.length, cells: cellsOfRows(rows), palette: [...p.palette] })
   }
   const pickSituation = (s: Situation): void => {
     setMoSit(s)
@@ -736,7 +741,7 @@ export default function PetMaker({
     const p = draft?.photo
     if (!onionOn || frameSel === null || !p || !frameSet) return null
     const rows = frameSel === 0 ? p.rows : frameSet.frames[frameSel - 1]
-    return rows ? { n: rows.length, cells: cellsOfRows(rows), palette: p.palette } : null
+    return rows ? { w: rows[0]?.length ?? 0, h: rows.length, cells: cellsOfRows(rows), palette: p.palette } : null
   }, [onionOn, frameSel, frameSet, draft?.photo])
 
   // ---- save, and what comes next ----
@@ -753,7 +758,8 @@ export default function PetMaker({
       design = made?.design ?? null
       frames = made?.frames
       if (!design?.photo) {
-        const min = minPhotoCells(photoSizeOf(draft.photo))
+        const dims = photoDimsOf(draft.photo)
+        const min = minPhotoCells(dims.w, dims.h)
         const n = countDots(docOfPhoto(draft.photo).cells)
         // Enough dots, but too thin a shape for the 12x12 the battle side reads.
         return setError(n < min ? t('pet.px.tooSmall', { n, min }) : t('pet.px.tooThin'))
@@ -965,10 +971,18 @@ export default function PetMaker({
               />
             </div>
             <div className="pmk-field">
-              <span>{t('pet.maker.resolution')}</span>
+              <span>{t('pet.maker.width')}</span>
               <Segmented<string>
-                value={String(res)}
-                onChange={(v) => guarded(() => setRes(Number(v) as PhotoSize))}
+                value={String(res.w)}
+                onChange={(v) => guarded(() => setRes({ ...res, w: Number(v) }))}
+                options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+              />
+            </div>
+            <div className="pmk-field">
+              <span>{t('pet.maker.height')}</span>
+              <Segmented<string>
+                value={String(res.h)}
+                onChange={(v) => guarded(() => setRes({ ...res, h: Number(v) }))}
                 options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
               />
             </div>
@@ -989,18 +1003,68 @@ export default function PetMaker({
     </section>
   )
 
+  // A finished picture's grid changes around its dots (they keep their size; its frames take the same canvas).
+  const resizePicture = (d: PhotoDims): void => {
+    const p = draft?.photo
+    if (!draft || !p) return
+    const photo: PhotoArt = { palette: [...p.palette], rows: fitRows(p.rows, d.w, d.h) }
+    const n = countDots(docOfPhoto(photo).cells)
+    const min = minPhotoCells(d.w, d.h)
+    // A smaller canvas can crop the picture down to a speck: refuse that, and say why.
+    if (n < min) return setSizeNote(t('pet.px.tooSmall', { n, min }))
+    setSizeNote(null)
+    const frames = framesU.value
+    if (frames) {
+      const resized: FrameMap = {}
+      for (const [sit, set] of Object.entries(frames) as Array<[Situation, FrameSet]>)
+        resized[sit] = { fps: set.fps, frames: set.frames.map((g) => fitRows(g, d.w, d.h)) }
+      framesU.replace(resized)
+    }
+    setDraft({ ...draft, photo })
+    setRes(d)
+    setFrameSel(null)
+    reseed(docOfPhoto(photo))
+    setEdited(true)
+    touch()
+  }
+
+  // The grid's width and height, one row each. A blank canvas clears itself; a finished picture is resampled.
+  const sizeRows = (pick: (d: PhotoDims) => void): JSX.Element => (
+    <fieldset className="pmk-fields" disabled={!!ask}>
+      <div className="pmk-field">
+        <span>{t('pet.maker.width')}</span>
+        <Segmented<string>
+          value={String(res.w)}
+          onChange={(v) => guarded(() => pick({ w: Number(v), h: res.h }))}
+          options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+        />
+      </div>
+      <div className="pmk-field">
+        <span>{t('pet.maker.height')}</span>
+        <Segmented<string>
+          value={String(res.h)}
+          onChange={(v) => guarded(() => pick({ w: res.w, h: Number(v) }))}
+          options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+        />
+      </div>
+    </fieldset>
+  )
+
   // A blank canvas can still change its size (which clears it, so it asks once drawn on).
   const canvasSection = blank && (
     <section className="pmk-sec">
       <h4 className="pmk-sec-title">{t('pet.maker.canvasSize')}</h4>
       {overwriteAsk}
-      <fieldset className="pmk-fields" disabled={!!ask}>
-        <Segmented<string>
-          value={String(res)}
-          onChange={(v) => guarded(() => toBlank(Number(v) as PhotoSize))}
-          options={PHOTO_SIZES.map((n) => ({ value: String(n), label: `${n}x${n}` }))}
-        />
-      </fieldset>
+      {sizeRows((d) => toBlank(d))}
+    </section>
+  )
+  // A finished picture (made earlier, no photo to remake it from): its grid can be changed.
+  const gridSection = !blank && !source && !!draft?.photo && (
+    <section className="pmk-sec">
+      <h4 className="pmk-sec-title">{t('pet.maker.canvasSize')}</h4>
+      {overwriteAsk}
+      {sizeRows((d) => resizePicture(d))}
+      {sizeNote && <p className="pm-error">{sizeNote}</p>}
     </section>
   )
 
@@ -1084,13 +1148,13 @@ export default function PetMaker({
         placeholder={t('pet.fr.aiHint')}
         build={(q) => {
           const p = draft.photo!
-          const doc: PixelDoc = { n: p.rows.length, cells: cellsOfRows(p.rows), palette: p.palette }
-          const scale = scaleFor(doc.n)
-          return { system: FRAMES_SYSTEM, prompt: buildFramesPrompt(doc, gridRows(doc), q, scale), images: [pngOf(doc.n, doc.n, rgbaOfDoc(doc, hexToRgb), scale)] }
+          const doc: PixelDoc = { w: photoDimsOf(p).w, h: p.rows.length, cells: cellsOfRows(p.rows), palette: p.palette }
+          const scale = scaleFor(Math.max(doc.w, doc.h))
+          return { system: FRAMES_SYSTEM, prompt: buildFramesPrompt(doc, gridRows(doc), q, scale), images: [pngOf(doc.w, doc.h, rgbaOfDoc(doc, hexToRgb), scale)] }
         }}
         check={(text) => {
           const p = draft.photo!
-          const r = parseFramesAnswer(text, { n: p.rows.length, cells: cellsOfRows(p.rows), palette: p.palette })
+          const r = parseFramesAnswer(text, { w: photoDimsOf(p).w, h: p.rows.length, cells: cellsOfRows(p.rows), palette: p.palette })
           if (r.ok) return { ok: true, result: { palette: r.palette, frames: r.frames, fps: r.fps } }
           return r.frame ? { ok: false, reason: 'pet.fr.err.frame', vars: { n: r.frame, why: t(r.reason, r.vars) } } : r
         }}
@@ -1098,7 +1162,7 @@ export default function PetMaker({
           <div className="pmo-strip">
             {r.frames.map((cells, i) => (
               <span key={i} className="pmo-thumb">
-                <FrameThumb rows={rowsOfCells(draft.photo!.rows.length, cells)} palette={r.palette} label={t('pet.fr.n', { n: i + 1 })} />
+                <FrameThumb rows={rowsOfCells(photoDimsOf(draft.photo!).w, draft.photo!.rows.length, cells)} palette={r.palette} label={t('pet.fr.n', { n: i + 1 })} />
                 <span>{i + 1}</span>
               </span>
             ))}
@@ -1106,15 +1170,15 @@ export default function PetMaker({
         )}
         onApply={(r) => {
           const p = draft.photo!
-          const n = p.rows.length
+          const { w, h } = photoDimsOf(p)
           // The answer's palette is the picture's with any new colours after it.
           setDraft({ ...draft, photo: { ...p, palette: r.palette } })
-          const next: FrameMap = { ...(framesU.value ?? {}), [moSit]: { fps: r.fps, frames: r.frames.map((c) => rowsOfCells(n, c)) } }
+          const next: FrameMap = { ...(framesU.value ?? {}), [moSit]: { fps: r.fps, frames: r.frames.map((c) => rowsOfCells(w, h, c)) } }
           framesU.set(next)
           setEdited(true)
           touch()
           setFrameSel(null)
-          reseed({ n, cells: cellsOfRows(p.rows), palette: r.palette })
+          reseed({ w, h, cells: cellsOfRows(p.rows), palette: r.palette })
         }}
       />
     </div>
@@ -1435,6 +1499,7 @@ export default function PetMaker({
                       {status}
                       {photoSection}
                       {canvasSection}
+                      {gridSection}
                       {motionSection}
                     </>
                   )}

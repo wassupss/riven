@@ -4,13 +4,16 @@ import {
   PHOTO,
   PHOTO_CHARS,
   PHOTO_MAX_COLORS,
+  PHOTO_PICTURE_COLORS,
   labOf,
   minPhotoCells,
+  photoDimsOf,
   photoLine,
   rgbToHex,
   type CustomColors,
   type CustomDesign,
   type PhotoArt,
+  type PhotoDims,
   type PhotoSize,
   type Role
 } from '../state/petSpecies'
@@ -704,15 +707,16 @@ export function quantizeLab(labs: Float32Array, k: number, rounds = 6): { center
  * subject; the dots' colours are then reduced to `colors` in Lab. One piece
  * (corners count), no holes. Null when too little is left.
  */
-export function photoArtOf(
-  img: Rgba,
-  fg: Uint8Array,
-  colors = PHOTO_MAX_COLORS,
-  size: PhotoSize = PHOTO
-): PhotoArt | null {
-  const N = size
+export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_PICTURE_COLORS, dims: PhotoDims = { w: PHOTO, h: PHOTO }): PhotoArt | null {
+  // The subject is square and stands in the shorter side of the grid; the air
+  // left over is across (centred) or above (the subject stands on the bottom).
+  const W = dims.w
+  const H = dims.h
+  const N = Math.min(W, H)
   const fit = photoFit(N)
   const pad = photoLine(N)
+  const colOff = Math.floor((W - fit) / 2)
+  const rowOff = H - pad - fit
   const w = img.width
   const h = img.height
   const mask = largestPart(fg, w)
@@ -763,10 +767,10 @@ export function photoArtOf(
       // Lit where at least half of it is subject. Its colour is the mean: a
       // darker-detail bias was tried and turned a zebra's stripes to black.
       if (area < cell * cell * 0.5) continue
-      lit.push((j + pad) * N + i + pad)
+      lit.push((j + rowOff) * W + i + colOff)
       rgb.push(r / area, g / area, b / area)
     }
-  if (lit.length < minPhotoCells(N)) return null
+  if (lit.length < minPhotoCells(W, H)) return null
   const labs = new Float32Array(lit.length * 3)
   lit.forEach((_, n) => labs.set(labOf(rgb[n * 3], rgb[n * 3 + 1], rgb[n * 3 + 2]), n * 3))
   const k = Math.max(2, Math.min(PHOTO_MAX_COLORS, Math.round(colors)))
@@ -780,8 +784,8 @@ export function photoArtOf(
     c[2] += rgb[n * 3 + 2]
     c[3]++
   })
-  const grid: string[][] = Array.from({ length: N }, () => Array(N).fill('.'))
-  lit.forEach((p, n) => (grid[Math.floor(p / N)][p % N] = PHOTO_CHARS[assign[n]]))
+  const grid: string[][] = Array.from({ length: H }, () => Array(W).fill('.'))
+  lit.forEach((p, n) => (grid[Math.floor(p / W)][p % W] = PHOTO_CHARS[assign[n]]))
   tidy(grid, true)
   return finishPhoto(
     grid,
@@ -807,11 +811,12 @@ export function finishPhoto(grid: string[][], palette: string[]): PhotoArt | nul
   const rows = grid.map((row) => row.map((ch) => (ch === '.' ? '.' : remap[ch])).join(''))
   let cells = 0
   for (const row of rows) for (const ch of row) if (ch !== '.') cells++
-  const size = rows.length
-  if (cells < minPhotoCells(size)) return null
+  const h = rows.length
+  const w = rows[0]?.length ?? 0
+  if (cells < minPhotoCells(w, h)) return null
   const out = { palette: order.map((i) => palette[i]), rows }
-  // A 32 says nothing of its size, as every picture from before the choice.
-  return size === PHOTO ? out : { ...out, size: size as PhotoSize }
+  // A square 32 says nothing of its size; a square 48 or 64 keeps the field older readers know.
+  return w === h && w !== PHOTO ? { ...out, size: w as PhotoSize } : out
 }
 
 /**
@@ -822,11 +827,11 @@ export function faithfulDesignFromPhoto(
   img: Rgba,
   fg: Uint8Array,
   name: string,
-  colors = PHOTO_MAX_COLORS,
-  size: PhotoSize = PHOTO
+  colors = PHOTO_PICTURE_COLORS,
+  dims: PhotoDims = { w: PHOTO, h: PHOTO }
 ): CustomDesign | null {
   const base = designFromPhoto(img, fg, name)
-  const photo = photoArtOf(img, fg, colors, size)
+  const photo = photoArtOf(img, fg, colors, dims)
   if (!base || !photo) return null
   return { ...base, noFace: true, photo }
 }
@@ -838,24 +843,24 @@ export function faithfulDesignFromPhoto(
  * a photo. Null when the picture is too small for that.
  */
 export function designFromPicture(photo: PhotoArt, name: string): CustomDesign | null {
-  const n = photo.rows.length
-  const data = new Uint8ClampedArray(n * n * 4)
-  const fg = new Uint8Array(n * n)
+  const { w, h } = photoDimsOf(photo)
+  const data = new Uint8ClampedArray(w * h * 4)
+  const fg = new Uint8Array(w * h)
   const rgb = photo.palette.map((c) => {
     const v = parseInt(c.slice(1), 16)
     return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
   })
   photo.rows.forEach((row, y) => {
-    for (let x = 0; x < n; x++) {
+    for (let x = 0; x < w; x++) {
       const ch = row[x]
       if (!ch || ch === '.') continue
       const c = rgb[PHOTO_CHARS.indexOf(ch)]
       if (!c) continue
-      const i = y * n + x
+      const i = y * w + x
       data.set([c[0], c[1], c[2], 255], i * 4)
       fg[i] = 1
     }
   })
-  const base = designFromPhoto({ width: n, height: n, data }, fg, name)
+  const base = designFromPhoto({ width: w, height: h, data }, fg, name)
   return base ? { ...base, noFace: true, photo } : null
 }

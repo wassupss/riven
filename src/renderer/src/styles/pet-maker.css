@@ -619,6 +619,7 @@
 }
 .pmx-view {
   flex: none;
+  display: flex;
   overflow: hidden;
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
@@ -632,6 +633,8 @@
 }
 .pmx-canvas {
   display: block;
+  /* A picture that is not square sits in the middle of the box; auto margins never clip it when zoomed. */
+  margin: auto;
   touch-action: none;
   user-select: none;
   cursor: crosshair;
