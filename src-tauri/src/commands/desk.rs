@@ -191,6 +191,12 @@ pub async fn pet_window_box() -> CmdResult<Option<Value>> {
   blocking(move || pet::window_box()).await
 }
 
+/// pet:room: the assistant card beside the pet takes `width` x `height` of the window.
+#[tauri::command]
+pub async fn pet_room(open: bool, width: f64, height: f64) -> CmdResult<()> {
+  blocking(move || pet::room(open, width, height)).await
+}
+
 #[tauri::command]
 pub async fn pet_set_break(min: Option<Value>) -> CmdResult<()> {
   blocking(move || pet::set_break(&min.unwrap_or(Value::Null))).await

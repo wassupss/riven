@@ -9287,10 +9287,9 @@ select {
                      installed app: the browser tab's own process sat near 0%
                      while the app UI renderer ran 16-34% and the shared GPU
                      process 12-37%.
-   An UNFOCUSED window gets none of this. Side by side with an editor is exactly
-   how people watch an agent work, and freezing every shimmer there made a
-   working app look hung — which is the opposite of what these animations are
-   for. Only the purely decorative one stops (see below). */
+   An UNFOCUSED window gets none of this: with two screens it is in plain view
+   while you work on the other one, and these animations report live work, which
+   is what somebody watching from there is watching for. */
 body.win-hidden .chat-ring::before,
 body.browser-active .chat-ring::before,
 body.win-hidden .riven-tab-label.shimmer,
@@ -9328,14 +9327,6 @@ body.win-hidden *::after {
   animation-play-state: paused !important;
 }
 
-/* Unfocused but visible: the completion ring is the one piece of motion that
-   says nothing a still frame doesn't — the ring is already there, spinning it
-   adds no information — so it is the only thing that stops. Everything that
-   reports live work keeps moving, because that is what somebody watching from
-   the next window is watching FOR. */
-body.win-unfocused .chat-ring::before {
-  animation-play-state: paused;
-}
 
 /* Full-size image viewer (a chat thumbnail is too small to read a screenshot). */
 .img-view {

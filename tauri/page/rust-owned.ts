@@ -284,6 +284,7 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pet:dragMove': [],
   'pet:dragEnd': [],
   'pet:windowBox': [],
+  'pet:room': ['open', 'width', 'height'],
   'pet:setBreak': ['min'],
   'pet:setOnTop': ['on'],
   'pet:askOnTop': ['on'],
