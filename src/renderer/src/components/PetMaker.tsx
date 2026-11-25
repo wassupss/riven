@@ -99,7 +99,7 @@ import {
   type Crop,
   type Rgba
 } from '../lib/petPhoto'
-import { blankDoc, countDots, docOfPhoto, photoOfDoc, type PixelDoc } from '../lib/pixelEdit'
+import { blankDoc, countDots, docOfPhoto, photoOfDoc, resampleRows, type PixelDoc } from '../lib/pixelEdit'
 import { nextName } from '../lib/petMaker'
 
 // ---------------------------------------------------------------------------
@@ -997,29 +997,61 @@ export default function PetMaker({
     </section>
   )
 
+  // A finished picture's grid changes by resampling its dots (and its frames); no photo to remake it from.
+  const resizePicture = (d: PhotoDims): void => {
+    const p = draft?.photo
+    if (!draft || !p) return
+    const photo: PhotoArt = { palette: [...p.palette], rows: resampleRows(p.rows, d.w, d.h) }
+    const frames = framesU.value
+    if (frames) {
+      const resized: FrameMap = {}
+      for (const [sit, set] of Object.entries(frames) as Array<[Situation, FrameSet]>)
+        resized[sit] = { fps: set.fps, frames: set.frames.map((g) => resampleRows(g, d.w, d.h)) }
+      framesU.replace(resized)
+    }
+    setDraft({ ...draft, photo })
+    setRes(d)
+    setFrameSel(null)
+    reseed(docOfPhoto(photo))
+    setEdited(true)
+    touch()
+  }
+
+  // The grid's width and height, one row each. A blank canvas clears itself; a finished picture is resampled.
+  const sizeRows = (pick: (d: PhotoDims) => void): JSX.Element => (
+    <fieldset className="pmk-fields" disabled={!!ask}>
+      <div className="pmk-field">
+        <span>{t('pet.maker.width')}</span>
+        <Segmented<string>
+          value={String(res.w)}
+          onChange={(v) => guarded(() => pick({ w: Number(v), h: res.h }))}
+          options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+        />
+      </div>
+      <div className="pmk-field">
+        <span>{t('pet.maker.height')}</span>
+        <Segmented<string>
+          value={String(res.h)}
+          onChange={(v) => guarded(() => pick({ w: res.w, h: Number(v) }))}
+          options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+        />
+      </div>
+    </fieldset>
+  )
+
   // A blank canvas can still change its size (which clears it, so it asks once drawn on).
   const canvasSection = blank && (
     <section className="pmk-sec">
       <h4 className="pmk-sec-title">{t('pet.maker.canvasSize')}</h4>
       {overwriteAsk}
-      <fieldset className="pmk-fields" disabled={!!ask}>
-        <div className="pmk-field">
-          <span>{t('pet.maker.width')}</span>
-          <Segmented<string>
-            value={String(res.w)}
-            onChange={(v) => guarded(() => toBlank({ w: Number(v), h: res.h }))}
-            options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
-          />
-        </div>
-        <div className="pmk-field">
-          <span>{t('pet.maker.height')}</span>
-          <Segmented<string>
-            value={String(res.h)}
-            onChange={(v) => guarded(() => toBlank({ w: res.w, h: Number(v) }))}
-            options={PHOTO_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
-          />
-        </div>
-      </fieldset>
+      {sizeRows((d) => toBlank(d))}
+    </section>
+  )
+  // A finished picture (made earlier, no photo to remake it from): its grid can be changed.
+  const gridSection = !blank && !source && !!draft?.photo && (
+    <section className="pmk-sec">
+      <h4 className="pmk-sec-title">{t('pet.maker.canvasSize')}</h4>
+      {sizeRows((d) => resizePicture(d))}
     </section>
   )
 
@@ -1442,6 +1474,7 @@ export default function PetMaker({
                       {status}
                       {photoSection}
                       {canvasSection}
+                      {gridSection}
                       {motionSection}
                     </>
                   )}

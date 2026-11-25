@@ -19,6 +19,7 @@ import {
   rectCells,
   rectOf,
   redo,
+  resampleRows,
   replaceColor,
   stamp,
   stampAll,
@@ -291,5 +292,15 @@ describe('moving and clearing a part of the picture', () => {
 
   it('makes a rectangle from two corners in either order', () => {
     expect(rectOf(3, 1, 1, 3)).toEqual({ x0: 1, y0: 1, x1: 3, y1: 3 })
+  })
+})
+
+describe('changing a finished picture grid', () => {
+  it('grows by repeating dots and shrinks by dropping them', () => {
+    expect(resampleRows(['01', '23'], 4, 2)).toEqual(['0011', '2233'])
+    expect(resampleRows(['0011', '2233'], 2, 2)).toEqual(['01', '23'])
+  })
+  it('takes a new width and height on their own (a tall picture from a square one)', () => {
+    expect(resampleRows(['01', '23'], 2, 4)).toEqual(['01', '01', '23', '23'])
   })
 })

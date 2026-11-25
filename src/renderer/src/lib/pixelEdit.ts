@@ -331,3 +331,24 @@ export function moveRect(cells: Uint8Array, gw: number, gh: number, r: CellRect,
 export function clearRect(cells: Uint8Array, w: number, r: CellRect): void {
   for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) cells[y * w + x] = EMPTY
 }
+
+/**
+ * A picture's rows at a new width and height (nearest dot, each new dot takes
+ * the old dot under its centre). Growing repeats dots; shrinking drops some.
+ * Used when a finished picture changes its grid: its frames change the same way.
+ */
+export function resampleRows(rows: string[], nw: number, nh: number): string[] {
+  const h = rows.length
+  const w = rows[0]?.length ?? 0
+  const out: string[] = []
+  for (let y = 0; y < nh; y++) {
+    const sy = Math.min(h - 1, Math.floor(((y + 0.5) * h) / nh))
+    let row = ''
+    for (let x = 0; x < nw; x++) {
+      const sx = Math.min(w - 1, Math.floor(((x + 0.5) * w) / nw))
+      row += rows[sy]?.[sx] ?? '.'
+    }
+    out.push(row)
+  }
+  return out
+}
