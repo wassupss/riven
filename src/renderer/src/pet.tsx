@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import PetDevice from './components/PetDevice'
+import { AssistantCard } from './components/PetChatDialog'
 import { loadSettings, getSettings } from './state/settings'
 import { applyTheme } from './state/themes'
 import { installNoNativeMenu } from './lib/noNativeMenu'
@@ -25,5 +26,6 @@ void loadSettings().then(() => applyTheme(getSettings().theme))
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <PetDevice detached />
+    <AssistantCard anchor="detached" />
   </React.StrictMode>
 )

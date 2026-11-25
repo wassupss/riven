@@ -1223,6 +1223,8 @@ const api = {
     cursorInside: (): Promise<boolean> => ipcRenderer.invoke('pet:cursorInside'),
     // The floating pet's window on screen (null when the pet is inside riven's window).
     windowBox: (): Promise<{ x: number; y: number; w: number; h: number } | null> => ipcRenderer.invoke('pet:windowBox'),
+    // The assistant card on the pet's left takes room in the window (0 when closed).
+    room: (open: boolean, width: number, height: number): Promise<void> => ipcRenderer.invoke('pet:room', open, width, height),
     // The device measures itself; main resizes the window to match.
     resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),
     // A hand drag of the bare pet: main follows the cursor between start and end.

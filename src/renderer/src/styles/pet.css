@@ -1757,12 +1757,6 @@
 
 /* The whole conversation, in riven's window (PetChatDialog): the CLI chat
    pane's own parts in a modal. */
-.pet-chat-modal {
-  width: 680px;
-  max-width: calc(100vw - 32px);
-  height: min(720px, 82vh);
-  max-height: 82vh;
-}
 .pet-chat-head {
   gap: 8px;
   min-width: 0;
@@ -1812,34 +1806,58 @@
   height: auto;
 }
 
-/* The assistant's conversation as a dock panel: fills the panel, the body scrolls. */
-.assistant-panel {
+/* The assistant card: beside the pet, in riven's window or in the pet's own window
+   (components/PetChatDialog, AssistantCard). Same card, same look either way. */
+.assistant-card {
+  position: fixed;
+  z-index: var(--z-modal);
+  width: 540px;
+  max-width: calc(100vw - 16px);
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.35);
+  overflow: hidden;
 }
-.assistant-panel .pet-chat-body {
+/* The pet's own window: the card fills the room the window made on the left. */
+.assistant-card.detached {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  height: auto;
+}
+.pet-window.assist-open #root {
+  display: flex;
+  justify-content: flex-end;
+}
+.assistant-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.assistant-card-body .pet-chat-body {
   flex: 1 1 auto;
   min-height: 0;
 }
-/* The dock tab already names the panel, so its header is a slim strip: the pet's
-   name and its state, no heavy rule under a title that repeats the tab. */
-.assistant-panel .pet-chat-head {
+/* The header is a slim strip with the pet's name and state. */
+.assistant-card-body .pet-chat-head {
   padding: 8px 12px;
   font-size: var(--text-sm);
   font-weight: 500;
   border-bottom: 1px solid var(--hairline);
   background: var(--bg-2);
 }
-.assistant-panel .pet-chat-head .pet-chat-name {
+.assistant-card-body .pet-chat-head .pet-chat-name {
   color: var(--fg-dim);
 }
-.assistant-panel .chat-scroll {
+.assistant-card-body .chat-scroll {
   padding: 14px 14px 6px;
 }
 /* Before the first message: centred, quiet, a line of its own. */
-.assistant-panel .cli-chat-empty {
+.assistant-card-body .cli-chat-empty {
   margin: auto;
   padding: 32px 20px;
   max-width: 340px;
@@ -1848,6 +1866,6 @@
   font-size: var(--text-sm);
   line-height: 1.6;
 }
-.assistant-panel .chat-composer {
+.assistant-card-body .chat-composer {
   margin: 8px 12px 12px;
 }

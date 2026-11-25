@@ -474,7 +474,6 @@ export type NamedPanel =
   | 'editor'
   | 'search'
   | 'git'
-  | 'assistant'
   | 'preview'
   | 'notes'
   | 'api'
@@ -738,87 +737,6 @@ export function openEditorSplit(path?: string): void {
   else api.getPanel('editor')?.api.setActive()
 }
 
-// A pet assistant's conversation as a panel of its own (it pops out like any other).
-// One per assistant: asking for it again brings it up.
-/** The assistant conversation's panel, in riven's window or in a popout window. */
-function findAssistant(bornAt: number): { close: () => void } | null {
-  const api = activeApi
-  if (!api) return null
-  const id = `assistant-${Math.floor(bornAt)}`
-  const inside = api.getPanel(id)
-  if (inside) return { close: () => api.removePanel(inside) }
-  for (const pg of api.getPopouts() as unknown as Array<{ window?: { close(): void }; group?: { panels: Array<{ id: string }> } }>) {
-    if (pg.group?.panels.some((p) => p.id === id)) return { close: () => pg.window?.close() }
-  }
-  return null
-}
-
-/** Whether this pet's conversation is open (in riven's window or in its own window). */
-export function assistantOpen(bornAt: number): boolean {
-  return findAssistant(bornAt) !== null
-}
-
-/** Close this pet's conversation panel (or its window). */
-export function closeAssistant(bornAt: number): void {
-  findAssistant(bornAt)?.close()
-}
-
-export async function addAssistant(bornAt: number): Promise<void> {
-  const api = activeApi
-  if (!api) return
-  const id = `assistant-${Math.floor(bornAt)}`
-  const existing = api.getPanel(id)
-  if (existing) {
-    existing.api.setActive()
-    return
-  }
-  const W = 540
-  const H = 680
-  const panel = api.addPanel({
-    id,
-    component: 'assistant',
-    title: t('title.assistant'),
-    renderer: 'always',
-    params: { bornAt: Math.floor(bornAt) }
-  })
-  // The floating pet is a window on the desktop: the conversation is its own window
-  // just to the pet's left, so both show at once.
-  // Keep the whole panel (its composer included) inside the room it is placed in: the
-  // height shrinks to the room, and the top moves up when the pet sits low.
-  const fit = (top: number, room: number): { top: number; height: number } => {
-    const height = Math.max(240, Math.min(H, room - 16))
-    return { top: Math.min(Math.max(8, top), Math.max(8, room - height - 8)), height }
-  }
-  const box = await window.api.pet.windowBox().catch(() => null)
-  if (box) {
-    try {
-      const f = fit(box.y, window.screen.availHeight || window.innerHeight)
-      await api.addPopoutGroup(panel, {
-        position: { left: Math.max(0, box.x - W - 8), top: f.top, width: W, height: f.height }
-      })
-      return
-    } catch (e) {
-      console.error('[dock] assistant window failed, using a floating panel', e)
-    }
-  }
-  // The pet is inside riven's window: a floating panel over the layout, just to the
-  // pet's left (the pet's place on screen, measured against the dock).
-  const petEl = document.querySelector('.pet-device .pet-stage') as HTMLElement | null
-  if (petEl) {
-    const pr = petEl.getBoundingClientRect()
-    const dock = (document.querySelector('.dv-dockview') as HTMLElement | null)?.getBoundingClientRect()
-    const dl = dock?.left ?? 0
-    const dt = dock?.top ?? 0
-    const f = fit(pr.top - dt, dock?.height || window.innerHeight)
-    api.addFloatingGroup(panel, {
-      width: W,
-      height: f.height,
-      position: { left: Math.max(0, pr.left - dl - W - 8), top: f.top }
-    })
-    return
-  }
-  api.addFloatingGroup(panel, { width: W, height: H, position: { bottom: 56, right: 24 } })
-}
 
 const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right' | 'below' }> = {
   editor: { titleKey: 'title.editor', direction: 'right' },

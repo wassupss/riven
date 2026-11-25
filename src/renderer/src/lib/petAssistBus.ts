@@ -56,6 +56,7 @@ type Msg =
   | { type: 'choose'; bornAt: number; card: string; choices: string[] }
   | { type: 'interrupt'; bornAt: number }
   | { type: 'open'; bornAt: number }
+  | { type: 'toggle'; bornAt: number }
   | { type: 'hello' }
   // host -> pet
   | { type: 'status'; status: AssistStatus }
@@ -86,9 +87,12 @@ export function chooseAssistant(bornAt: number, card: string, choices: string[])
 export function interruptAssistant(bornAt: number): void {
   post({ type: 'interrupt', bornAt })
 }
-/** Open the whole conversation in riven's window. */
-export function openAssistantChat(bornAt: number): void {
-  post({ type: 'open', bornAt })
+/**
+ * Open or close a pet's conversation, wherever its pet is: the window that hosts
+ * the pet (riven's, or the pet's own) answers; the others ignore it.
+ */
+export function requestAssistantChat(bornAt: number): void {
+  post({ type: 'toggle', bornAt })
 }
 /** Ask the host for every assistant's status (a pet window that just opened). */
 export function helloAssistants(): void {
@@ -120,6 +124,17 @@ export function serveAssistants(cb: (m: HostSideMsg) => void): () => void {
     const m = e.data
     if (m && (m.type === 'ask' || m.type === 'choose' || m.type === 'interrupt' || m.type === 'open' || m.type === 'hello'))
       cb(m)
+  }
+  return () => ch.close()
+}
+
+/** Hear requests to open or close a conversation. Returns the unsubscribe. */
+export function onAssistantChatRequest(cb: (bornAt: number) => void): () => void {
+  if (!has()) return () => {}
+  const ch = new BroadcastChannel(NAME)
+  ch.onmessage = (e: MessageEvent<Msg>) => {
+    const m = e.data
+    if (m && m.type === 'toggle') cb(m.bornAt)
   }
   return () => ch.close()
 }

@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { ArrowUp, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { buildTurns, initialModel, reduce, type AgentProgress, type CliEvent } from '../lib/cliChat'
 import { TurnView } from '../dock/panels/clichat/TurnView'
 import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from '../dock/panels/clichat/Cards'
 import TerminalPane from './TerminalPane'
-import { assistantPet, closePetChat, sendFromChat, usePetChat, viewPetChat } from '../state/petAssistants'
-import type { AssistPet } from '../lib/petAssistBus'
+import { assistantPet, closePetChat, openPetChat, sendFromChat, usePetChat, viewPetChat } from '../state/petAssistants'
+import { onAssistantChatRequest, type AssistPet } from '../lib/petAssistBus'
 import '../styles/cli-chat.css'
 import '../styles/pet.css'
 
@@ -26,13 +26,65 @@ const NO_AGENTS: Record<string, AgentProgress> = {}
 // Only the recent turns are drawn; a pet conversation is read, not mined.
 const TURNS_SHOWN = 40
 
-export default function PetChatDialog(): JSX.Element | null {
+/** The card's width: its room on the pet's left, in riven's window and in the pet's own. */
+export const ASSIST_CARD_W = 540
+/** Its height when the pet is a desktop window (the window grows to fit it). */
+export const ASSIST_CARD_H = 560
+const CARD_GAP = 12
+
+/**
+ * A pet's conversation, beside the pet wherever the pet is: over riven's window when
+ * the pet lives inside the app, and in the pet's own window (which grows to make room)
+ * when it is a desktop window. One card, one behaviour, both ways.
+ */
+export function AssistantCard({ anchor }: { anchor: 'attached' | 'detached' }): JSX.Element | null {
   const open = usePetChat((s) => s.open)
+  const [box, setBox] = useState({ left: 0, top: 0, height: 0 })
+
+  // The shortcut, or the pet's menu: whichever window hosts the pet answers.
+  useEffect(
+    () =>
+      onAssistantChatRequest((bornAt) => {
+        if (usePetChat.getState().open === Math.floor(bornAt)) closePetChat()
+        else openPetChat(bornAt)
+      }),
+    []
+  )
+
+  // Where it sits: left of the pet inside riven; the whole pet window when detached.
+  useLayoutEffect(() => {
+    if (open === null) return
+    const place = (): void => {
+      if (anchor === 'detached') return setBox({ left: 0, top: 0, height: window.innerHeight })
+      const stage = document.querySelector('.pet-device .pet-stage') as HTMLElement | null
+      const r = stage?.getBoundingClientRect()
+      const height = Math.min(680, window.innerHeight - 16)
+      const top = Math.min(Math.max(8, r?.top ?? 8), window.innerHeight - height - 8)
+      const left = Math.max(8, (r?.left ?? ASSIST_CARD_W + 24) - ASSIST_CARD_W - CARD_GAP)
+      setBox({ left, top, height })
+    }
+    place()
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [open, anchor])
+
+  // A desktop pet's window makes room for the card while it is open.
+  useEffect(() => {
+    if (anchor !== 'detached') return
+    const on = open !== null
+    document.documentElement.classList.toggle('assist-open', on)
+    void window.api.pet.room(on, ASSIST_CARD_W + CARD_GAP, ASSIST_CARD_H).catch(() => {})
+  }, [open, anchor])
+
   if (open === null) return null
-  return <Dialog key={open} bornAt={open} />
+  return (
+    <div className={`assistant-card ${anchor}`} style={{ left: box.left, top: box.top, height: box.height }}>
+      <Dialog key={open} bornAt={open} />
+    </div>
+  )
 }
 
-function Dialog({ bornAt, panel = false }: { bornAt: number; panel?: boolean }): JSX.Element {
+function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
   const t = useT()
   const [model, dispatch] = useReducer(reduce, undefined, initialModel)
   const [key, setKey] = useState<string | null>(null)
@@ -47,8 +99,8 @@ function Dialog({ bornAt, panel = false }: { bornAt: number; panel?: boolean }):
   // A request to open this conversation again (the shortcut): the caret goes to its field.
   const seq = usePetChat((s) => s.seq)
   useEffect(() => {
-    if (panel && seq) inputRef.current?.focus()
-  }, [seq, panel])
+    if (seq) inputRef.current?.focus()
+  }, [seq])
 
   // Events first, then the session: nothing it says on attaching is missed.
   useEffect(() => {
@@ -70,7 +122,6 @@ function Dialog({ bornAt, panel = false }: { bornAt: number; panel?: boolean }):
   }, [bornAt])
 
   useEffect(() => {
-    if (panel) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && !composing.current) closePetChat()
     }
@@ -120,7 +171,7 @@ function Dialog({ bornAt, panel = false }: { bornAt: number; panel?: boolean }):
                 <SquareTerminal size={14} />
               </button>
             )}
-            {!panel && (
+            {(
             <button
               type="button"
               className="pet-chat-icon"
@@ -216,17 +267,5 @@ function Dialog({ bornAt, panel = false }: { bornAt: number; panel?: boolean }):
         </div>
     </>
   )
-  if (panel) return <div className="assistant-panel">{body}</div>
-  return (
-    <div className="modal-overlay" onClick={closePetChat}>
-      <div className="modal pet-chat-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={pet?.title}>
-        {body}
-      </div>
-    </div>
-  )
-}
-
-/** A pet assistant's conversation as a dock panel (the same body as the dialog). */
-export function AssistantChat({ bornAt }: { bornAt: number }): JSX.Element {
-  return <Dialog key={bornAt} bornAt={bornAt} panel />
+  return <div className="assistant-card-body">{body}</div>
 }

@@ -6,11 +6,11 @@ import {
   helloAssistants,
   interruptAssistant,
   onAssistants,
-  openAssistantChat,
   type AssistCard,
   type AssistStatus
 } from '../lib/petAssistBus'
 import { useUI } from '../state/ui'
+import { openPetChat } from '../state/petAssistants'
 import PetManage from './PetManage'
 import { isPageHidden } from '../lib/windowVisibility'
 import '../styles/pet.css'
@@ -1279,11 +1279,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (bornAt === Math.floor(pet.bornAt)) speak(balloonText(text), ANSWER_MS)
     }
   }
-  const openChat = (bornAt: number): void => {
-    openAssistantChat(bornAt)
-    // From its own window: bring riven's window up, where the conversation opens.
-    if (detached) void window.api.pet.openSettings('pet-chat')
-  }
+  // The card opens beside the pet, in whichever window the pet is (see AssistantCard).
+  const openChat = (bornAt: number): void => openPetChat(bornAt)
   /** What it says when the menu opens. */
   const menuLine = (): string => t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
   const startBreak = (): void => {

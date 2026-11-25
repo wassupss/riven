@@ -162,6 +162,7 @@ permissions = [
   "allow-pet-open",
   "allow-pet-resize",
   "allow-pet-window-box",
+  "allow-pet-room",
   "allow-pet-set-break",
   "allow-pet-set-on-top",
   "allow-pet-ask-on-top",
@@ -1056,6 +1057,11 @@ commands.allow = ["pet_resize"]
 identifier = "allow-pet-window-box"
 description = "Allows pet_window_box."
 commands.allow = ["pet_window_box"]
+
+[[permission]]
+identifier = "allow-pet-room"
+description = "Allows pet_room."
+commands.allow = ["pet_room"]
 
 [[permission]]
 identifier = "allow-pet-set-break"
