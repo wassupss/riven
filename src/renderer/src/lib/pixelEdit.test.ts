@@ -3,17 +3,21 @@ import {
   HISTORY_LIMIT,
   addColor,
   blankDoc,
+  clearRect,
   countDots,
   docOfPhoto,
   emptyHistory,
   floodFill,
+  fullRect,
   keepBiggest,
   lineCells,
   mirrorX,
+  moveRect,
   photoOfDoc,
   piecesOf,
   pushHistory,
   rectCells,
+  rectOf,
   redo,
   replaceColor,
   stamp,
@@ -244,5 +248,40 @@ describe('docs and pictures', () => {
     stamp(doc.cells, 32, 5, 5, 3, 1)
     const pic = photoOfDoc(doc)
     expect(finishPhoto(pic.rows.map((r) => [...r]), pic.palette)).toBeNull()
+  })
+})
+
+describe('moving and clearing a part of the picture', () => {
+  it('moves the whole picture by an offset and drops what leaves the edge', () => {
+    const n = 4
+    const cells = new Uint8Array(n * n)
+    cells[0] = 1 // top-left
+    cells[1 * n + 3] = 2 // right edge
+    moveRect(cells, n, fullRect(n), 1, 1)
+    expect(cells[1 * n + 1]).toBe(1)
+    // the dot at x=3 would go to x=4: gone
+    expect(Array.from(cells).filter((v) => v === 2)).toHaveLength(0)
+  })
+
+  it('moves only the selected part and leaves the rest alone', () => {
+    const n = 4
+    const cells = new Uint8Array(n * n)
+    cells[0] = 1
+    cells[3 * n + 3] = 2
+    moveRect(cells, n, { x0: 0, y0: 0, x1: 1, y1: 1 }, 2, 0)
+    expect(cells[0]).toBe(0)
+    expect(cells[2]).toBe(1)
+    expect(cells[3 * n + 3]).toBe(2)
+  })
+
+  it('clears only the selected rectangle', () => {
+    const n = 3
+    const cells = new Uint8Array(n * n).fill(1)
+    clearRect(cells, n, { x0: 1, y0: 1, x1: 2, y1: 2 })
+    expect(Array.from(cells)).toEqual([1, 1, 1, 1, 0, 0, 1, 0, 0])
+  })
+
+  it('makes a rectangle from two corners in either order', () => {
+    expect(rectOf(3, 1, 1, 3)).toEqual({ x0: 1, y0: 1, x1: 3, y1: 3 })
   })
 })

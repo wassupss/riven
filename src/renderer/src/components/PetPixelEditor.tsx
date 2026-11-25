@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import {
   Eraser,
   FlipHorizontal2,
+  Move,
+  SquareDashed,
   Grid3x3,
   PaintBucket,
   Pencil,
@@ -38,6 +40,12 @@ import {
   stamp,
   stampAll,
   undo,
+  clearRect,
+  fullRect,
+  moveRect,
+  rectOf,
+  shiftRect,
+  type CellRect,
   type History,
   type PixelDoc
 } from '../lib/pixelEdit'
@@ -58,10 +66,12 @@ import {
 // so the tool, colour and zoom stay as they were.
 // ---------------------------------------------------------------------------
 
-export type PixelTool = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect'
+export type PixelTool = 'pencil' | 'eraser' | 'fill' | 'picker' | 'line' | 'rect' | 'move' | 'select'
 type Zoom = '1' | '2' | '4'
 
 const TOOLS: Array<{ id: PixelTool; key: string; icon: ReactNode }> = [
+  { id: 'move', key: 'v', icon: <Move size={15} /> },
+  { id: 'select', key: 's', icon: <SquareDashed size={15} /> },
   { id: 'pencil', key: 'b', icon: <Pencil size={15} /> },
   { id: 'eraser', key: 'e', icon: <Eraser size={15} /> },
   { id: 'fill', key: 'g', icon: <PaintBucket size={15} /> },
@@ -85,6 +95,9 @@ interface Stroke {
   anchor: [number, number]
   base: Uint8Array | null
   changed: boolean
+  /** Move: the part being moved (the selection, or the whole picture) and how far it has gone. */
+  rect?: CellRect
+  moved?: [number, number]
 }
 
 /** A picture at its own size on a canvas (CSS scales it up, pixelated). */
@@ -131,6 +144,9 @@ export default function PetPixelEditor({
   const [adding, setAdding] = useState(false)
   const [newHex, setNewHex] = useState('#ffffff')
   const [fullAsk, setFullAsk] = useState(false)
+  // The selected part (cells, inclusive). The ref is what the painter reads; the state is what the controls show.
+  const [sel, setSelState] = useState<CellRect | null>(null)
+  const selRef = useRef<CellRect | null>(null)
 
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -237,6 +253,14 @@ export default function PetPixelEditor({
       ctx.lineTo(W / 2, W)
       ctx.stroke()
     }
+    const sr = selRef.current
+    if (sr) {
+      ctx.setLineDash([4, 3])
+      ctx.strokeStyle = accent.current
+      ctx.lineWidth = Math.max(1, Math.round(window.devicePixelRatio || 1))
+      ctx.strokeRect(Math.round(sr.x0 * k) + 0.5, Math.round(sr.y0 * k) + 0.5, Math.round((sr.x1 - sr.x0 + 1) * k) - 1, Math.round((sr.y1 - sr.y0 + 1) * k) - 1)
+      ctx.setLineDash([])
+    }
     // Where the brush would land.
     const h = hover.current
     if (h && (tool === 'pencil' || tool === 'eraser' || tool === 'line' || tool === 'rect')) {
@@ -257,6 +281,12 @@ export default function PetPixelEditor({
     if (!frame.current) frame.current = requestAnimationFrame(paint)
   }, [paint])
   useEffect(() => () => cancelAnimationFrame(frame.current), [])
+
+  const setSel = useCallback((r: CellRect | null): void => {
+    selRef.current = r
+    setSelState(r)
+    schedule()
+  }, [schedule])
 
   // The big canvas's backing store follows its css size and the screen's density.
   const css = fit * Number(zoom)
@@ -304,6 +334,7 @@ export default function PetPixelEditor({
     doc.current = cloneDoc(seed.doc)
     history.current = emptyHistory()
     stroke.current = null
+    setSel(null)
     setColor((c) => Math.min(c, Math.max(0, seed.doc.palette.length - 1)))
     setVersion((v) => v + 1)
   }, [seed])
@@ -345,6 +376,16 @@ export default function PetPixelEditor({
     // A right click rubs out, whatever draws.
     const value = tool === 'eraser' || e.button === 2 ? EMPTY : color + 1
     const before = cloneDoc(d)
+    if (tool === 'select') {
+      setSel({ x0: pt[0], y0: pt[1], x1: pt[0], y1: pt[1] })
+      stroke.current = { before, value: 0, last: pt, anchor: pt, base: null, changed: false }
+      return
+    }
+    if (tool === 'move') {
+      // The selection moves on its own; with none, the whole picture does.
+      stroke.current = { before, value: 0, last: pt, anchor: pt, base: d.cells.slice(), changed: false, rect: selRef.current ?? fullRect(n) }
+      return
+    }
     if (tool === 'fill') {
       if (floodFill(d.cells, n, pt[0], pt[1], value, mirror)) {
         commit(before)
@@ -376,6 +417,16 @@ export default function PetPixelEditor({
     const d = doc.current
     if (tool === 'picker') {
       if (inGrid(pt)) pick(pt)
+    } else if (tool === 'select') {
+      setSel(rectOf(s.anchor[0], s.anchor[1], pt[0], pt[1]))
+    } else if (tool === 'move' && s.rect && s.base) {
+      const dx = pt[0] - s.anchor[0]
+      const dy = pt[1] - s.anchor[1]
+      d.cells.set(s.base)
+      moveRect(d.cells, n, s.rect, dx, dy)
+      s.moved = [dx, dy]
+      if (selRef.current) selRef.current = shiftRect(s.rect, dx, dy)
+      s.changed = dx !== 0 || dy !== 0
     } else if (s.base) {
       // The shape is drawn again over what was under it, every move.
       d.cells.set(s.base)
@@ -399,9 +450,34 @@ export default function PetPixelEditor({
       setTool('pencil')
       return
     }
+    if (tool === 'select') return
+    if (tool === 'move' && s.moved && selRef.current && s.rect) setSelState(selRef.current)
     const now = doc.current.cells
     if (s.changed && s.before.cells.some((v, i) => v !== now[i])) commit(s.before)
   }
+
+  // Background removal and nudging, as undo steps of their own.
+  const clearSel = useCallback((): void => {
+    const r = selRef.current
+    if (!r) return
+    const d = doc.current
+    const before = cloneDoc(d)
+    clearRect(d.cells, d.n, r)
+    if (before.cells.some((v, i) => v !== d.cells[i])) commit(before)
+    schedule()
+  }, [commit, schedule])
+  const nudge = useCallback(
+    (dx: number, dy: number): void => {
+      const d = doc.current
+      const before = cloneDoc(d)
+      const r = selRef.current ?? fullRect(d.n)
+      moveRect(d.cells, d.n, r, dx, dy)
+      if (selRef.current) setSelState((selRef.current = shiftRect(r, dx, dy)))
+      commit(before)
+      schedule()
+    },
+    [commit, schedule]
+  )
 
   // ---- keys ----
   useEffect(() => {
@@ -420,16 +496,23 @@ export default function PetPixelEditor({
         return
       }
       if (mod || e.altKey) return
-      const hit = TOOLS.find((x) => x.key === k)
-      if (hit) setTool(hit.id)
-      else if (k === 'm') setMirror((m) => !m)
-      else if (k === '1' || k === '2' || k === '3') setSize(Number(k))
-      else return
+      if ((k === 'delete' || k === 'backspace') && selRef.current) clearSel()
+      else if (k === 'escape' && selRef.current) setSel(null)
+      else if (e.key.startsWith('Arrow') && (tool === 'move' || selRef.current)) {
+        const by = e.shiftKey ? 10 : 1
+        nudge(e.key === 'ArrowLeft' ? -by : e.key === 'ArrowRight' ? by : 0, e.key === 'ArrowUp' ? -by : e.key === 'ArrowDown' ? by : 0)
+      } else {
+        const hit = TOOLS.find((x) => x.key === k)
+        if (hit) setTool(hit.id)
+        else if (k === 'm') setMirror((m) => !m)
+        else if (k === '1' || k === '2' || k === '3') setSize(Number(k))
+        else return
+      }
       e.preventDefault()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step])
+  }, [step, tool, clearSel, nudge, setSel])
 
   // ---- palette ----
   const palette = doc.current.palette
@@ -514,6 +597,16 @@ export default function PetPixelEditor({
             onClick={() => setMirror((m) => !m)}
           >
             <FlipHorizontal2 size={15} />
+          </button>
+          <button
+            type="button"
+            className="pmx-btn"
+            disabled={!sel}
+            aria-label={t('pet.px.clearSel')}
+            title={tip(t('pet.px.clearSel'), 'Delete')}
+            onClick={clearSel}
+          >
+            <Eraser size={15} />
           </button>
           <span className="pmx-sep" />
           <button type="button" className="pmx-btn" disabled={!canUndo} aria-label={t('pet.px.undo')} title={tip(t('pet.px.undo'), '⌘Z')} onClick={() => step('undo')}>
