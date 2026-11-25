@@ -1823,3 +1823,31 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+/* The dock tab already names the panel, so its header is a slim strip: the pet's
+   name and its state, no heavy rule under a title that repeats the tab. */
+.assistant-panel .pet-chat-head {
+  padding: 8px 12px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-2);
+}
+.assistant-panel .pet-chat-head .pet-chat-name {
+  color: var(--fg-dim);
+}
+.assistant-panel .chat-scroll {
+  padding: 14px 14px 6px;
+}
+/* Before the first message: centred, quiet, a line of its own. */
+.assistant-panel .cli-chat-empty {
+  margin: auto;
+  padding: 32px 20px;
+  max-width: 340px;
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+.assistant-panel .chat-composer {
+  margin: 8px 12px 12px;
+}
