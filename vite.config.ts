@@ -9,6 +9,9 @@ import { dockviewSubpixelOverflow } from './vite/dockviewSubpixelOverflow'
 
 export default defineConfig({
   root: resolve('src/renderer'),
+  // The .env files (VITE_SUPABASE_* from the release workflow) sit at the repo root,
+  // not under root (src/renderer), where Vite would look by default.
+  envDir: resolve('.'),
   resolve: {
     alias: {
       '@': resolve('src/renderer/src')
