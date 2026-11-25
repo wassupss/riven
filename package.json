@@ -35,6 +35,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "dockview": "^7.0.2",
     "dockview-react": "^7.0.2",
+    "esbuild": "^0.28.1",
     "lucide-react": "^1.24.0",
     "monaco-editor": "^0.52.2",
     "qrcode": "^1.5.4",
