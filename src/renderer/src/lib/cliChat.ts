@@ -266,7 +266,8 @@ export function buildTurns(items: CliItem[]): Turn[] {
         t.blocks.push({ kind: 'text', key: it.key, text: it.text })
         break
       case 'thinking':
-        t.blocks.push({ kind: 'thinking', key: it.key, text: it.text })
+        // A thinking block the transcript withholds (no text, only a signature) has nothing to show.
+        if (it.text.trim()) t.blocks.push({ kind: 'thinking', key: it.key, text: it.text })
         break
       case 'tool': {
         const row: ToolRow = { key: it.key, toolId: it.toolId, name: it.name, input: it.input, result: null }

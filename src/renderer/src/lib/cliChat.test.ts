@@ -87,8 +87,8 @@ describe('buildTurns', () => {
   it('groups a turn, attaches the tool result and sums usage once per item', () => {
     const [t] = buildTurns(turn)
     expect(t.user?.text).toBe('make a note')
-    expect(t.blocks.map((b) => b.kind)).toEqual(['thinking', 'tool', 'text'])
-    const tool = t.blocks[1]
+    expect(t.blocks.map((b) => b.kind)).toEqual(['tool', 'text'])
+    const tool = t.blocks[0]
     expect(tool.kind === 'tool' && tool.tool.result?.text).toBe('File created')
     expect(t.usage).toEqual({ requests: 2, input: 4, cacheWrite: 105, cacheRead: 1900, output: 33 })
     expect(t.durationMs).toBe(1200)
