@@ -2,13 +2,8 @@
 // Release assets for a signed, notarized Tauri riven.app (CI's
 // .github/workflows/release-tauri.yml; docs/tauri-rust-main.md, 9-7).
 //
-// Two feeds read them:
-//   Electron's (electron-updater / Squirrel.Mac, GitHub Releases "latest"):
-//     riven-<version>-universal-mac.zip   the .app, ditto'd like electron-builder's zip
-//     latest-mac.yml                      version, files[{url, sha512, size}], path, sha512, releaseDate
-//     The zip name must not contain "arm64": electron-updater on Apple silicon
-//     picks the arm64-named zip when one exists, otherwise the others.
-//   Tauri's (tauri-plugin-updater, src-tauri/src/services/update.rs):
+// The Tauri updater (tauri-plugin-updater, src-tauri/src/services/update.rs)
+// reads them. Electron is gone, so there is no Electron feed any more:
 //     riven-<version>-universal.app.tar.gz (+ .sig)   tauri build's updater bundle, renamed
 //     latest.json   {version, notes, pub_date, platforms: {darwin-aarch64, darwin-x86_64, ...: {url, signature}}}
 //     One universal tarball serves both arches. The plugin looks up
@@ -20,7 +15,6 @@
 //
 // Needs macOS (ditto). Never signs anything: the .sig comes from tauri build.
 import { execFileSync } from 'child_process'
-import { createHash } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -42,24 +36,6 @@ function opts(argv) {
   return o
 }
 
-const sha512 = (file) => createHash('sha512').update(fs.readFileSync(file)).digest('base64')
-
-// YAML scalars as electron-builder writes them: plain when safe, else single-quoted.
-const yq = (s) => (/^[\w.-]+$/.test(s) && !/^\d/.test(s) ? s : `'${String(s).replace(/'/g, "''")}'`)
-
-export function latestMacYml({ version, zipName, sha, size, date }) {
-  return [
-    `version: ${version}`,
-    'files:',
-    `  - url: ${yq(zipName)}`,
-    `    sha512: ${sha}`,
-    `    size: ${size}`,
-    `path: ${yq(zipName)}`,
-    `sha512: ${sha}`,
-    `releaseDate: '${date}'`,
-    ''
-  ].join('\n')
-}
 
 export function latestJson({ version, notes, date, url, signature }) {
   const entry = { signature, url }
@@ -84,15 +60,6 @@ function main() {
   if (!first.startsWith(path.basename(app) + '/')) throw new Error(`${o.updater} does not start with ${path.basename(app)}/ (got ${first})`)
 
   fs.mkdirSync(o.out, { recursive: true })
-  const zipName = `riven-${o.version}-universal-mac.zip`
-  const zip = path.join(o.out, zipName)
-  fs.rmSync(zip, { force: true })
-  // electron-builder's mac zip: the .app at the top, symlinks and extended
-  // attributes kept (the stapled ticket and the framework-less bundle survive).
-  execFileSync('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, zip])
-  const size = fs.statSync(zip).size
-  fs.writeFileSync(path.join(o.out, 'latest-mac.yml'), latestMacYml({ version: o.version, zipName, sha: sha512(zip), size, date }))
-
   const tarName = `riven-${o.version}-universal.app.tar.gz`
   fs.copyFileSync(o.updater, path.join(o.out, tarName))
   fs.writeFileSync(path.join(o.out, tarName + '.sig'), signature + '\n')

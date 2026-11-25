@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { MODES as CLI_MODES } from '../lib/cliChat'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured, url as supabaseUrl } from '../lib/supabase'
 import {
@@ -411,8 +412,10 @@ async function sendHistory(d: RemoteDevice, chatKey: string): Promise<void> {
 // ---- chat settings -------------------------------------------------------------
 
 // The chat pane's own three, in its own words.
-const MODES = ['plan', 'acceptEdits', 'default'] as const
-const modeLabel = (m: string): string => t(m === 'default' ? 'chat.mode.ask' : `chat.mode.${m}`)
+const MODES = CLI_MODES
+// The CLI chat's own labels for its modes (clichat/Header).
+const MODE_KEY: Record<string, string> = { default: 'chat.mode.ask', auto: 'clichat.mode.auto' }
+const modeLabel = (m: string): string => t(MODE_KEY[m] ?? `chat.mode.${m}`)
 
 /**
  * A chat's model, permission mode and the choices it has. From the pane itself

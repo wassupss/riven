@@ -8,7 +8,6 @@ import {
   GitBranch,
   Search,
   Globe,
-  History,
   PanelLeft,
   ExternalLink,
   StickyNote,
@@ -109,14 +108,6 @@ export default function QuickPanel(): JSX.Element | null {
         icon: <GitBranch size={15} />,
         panelId: 'git',
         run: () => togglePanel('git')
-      },
-      {
-        id: 'changes',
-        label: t('toolbar.panel.changes'),
-        section: sPanel,
-        icon: <History size={15} />,
-        panelId: 'changes',
-        run: () => togglePanel('changes')
       },
       {
         id: 'notes',

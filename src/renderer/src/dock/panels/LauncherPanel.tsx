@@ -10,7 +10,6 @@ import {
   Database,
   Search,
   GitBranch,
-  GitCompare,
   Users,
   Sparkles,
   type LucideIcon
@@ -58,8 +57,7 @@ export default function LauncherPanel({
     { kind: 'api', label: t('title.api'), Icon: Server },
     { kind: 'db', label: t('title.db'), Icon: Database },
     { kind: 'search', label: t('title.search'), Icon: Search },
-    { kind: 'git', label: t('title.git'), Icon: GitBranch },
-    { kind: 'changes', label: t('title.changes'), Icon: GitCompare }
+    { kind: 'git', label: t('title.git'), Icon: GitBranch }
   ]
 
   return (

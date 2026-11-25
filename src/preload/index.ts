@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils } from '../../tauri/page/bridge'
 import type {
   ColumnDetail,
   ConnectionConfig,
@@ -14,17 +14,17 @@ import type {
   SchemaInfo,
   TableInfo,
   TxStatus
-} from '../main/db/types'
-import type { ExportOptions } from '../main/db/mask'
-import type { ImportOptions, ImportPreview, ImportResult } from '../main/db/csv'
-import type { EditStatement, EditTarget } from '../main/db/edit'
-import type { DdlPlan } from '../main/db/ddl'
-import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../main/db/monitor'
-import type { CompletionMeta } from '../main/db/complete'
-import type { ErdModel } from '../main/db/erd'
-import type { SchemaSnapshot } from '../main/db/schemaDiff'
-import type { SearchOptions, SearchProgress, SearchSummary, SearchTable } from '../main/db/dataSearchSql'
-import type { ArchiveInfo, BackupOptions, RestoreOptions, ToolInfo } from '../main/db/dumpArgs'
+} from '../shared/db/types'
+import type { ExportOptions } from '../shared/db/mask'
+import type { ImportOptions, ImportPreview, ImportResult } from '../shared/db/csv'
+import type { EditStatement, EditTarget } from '../shared/db/edit'
+import type { DdlPlan } from '../shared/db/ddl'
+import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../shared/db/monitor'
+import type { CompletionMeta } from '../shared/db/complete'
+import type { ErdModel } from '../shared/db/erd'
+import type { SchemaSnapshot } from '../shared/db/schemaDiff'
+import type { SearchOptions, SearchProgress, SearchSummary, SearchTable } from '../shared/db/dataSearchSql'
+import type { ArchiveInfo, BackupOptions, RestoreOptions, ToolInfo } from '../shared/db/dumpArgs'
 
 export interface DirEntry {
   name: string
@@ -91,53 +91,6 @@ export interface PtySnapshot {
   rows: number
 }
 
-// Native agent-chat events all share one channel; the payload's `key` scopes it
-// to a pane. Renderer chat panels filter by their own key.
-export type ChatEvent = { turn?: string | null } & (
-  | {
-      key: string
-      kind: 'init'
-      sessionId: string | null
-      model: string | null
-      tools: string[]
-      slashCommands: string[]
-      mcpServers: Array<{ name: string; status: string }>
-    }
-  | { key: string; kind: 'text'; delta: string }
-  | {
-      key: string
-      kind: 'tool'
-      name: string
-      detail: string
-      path: string | null
-      code: string | null
-      toolId: string | null
-      parent: string | null
-    }
-  | { key: string; kind: 'toolResult'; toolId: string; isError: boolean }
-  | { key: string; kind: 'fileEdited'; path: string }
-  | { key: string; kind: 'usage'; input: number; output: number; isStart: boolean }
-  | {
-      key: string
-      kind: 'turnDone'
-      costUSD: number | null
-      sessionId: string | null
-      error: string | null
-    }
-  | { key: string; kind: 'exit'; code: number }
-  | { key: string; kind: 'sessionLost'; sessionId: string }
-  | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
-  | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
-  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number; durationMs?: number }
-  | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
-  | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
-  | { key: string; kind: 'status'; status: string | null; compactResult?: 'success' | 'failed'; compactError?: string }
-  | { key: string; kind: 'denied'; tool: string; reason?: string }
-  | { key: string; kind: 'thinking'; tokens: number }
-  | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
-  | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
-)
-const onChatEvent = multiplexed<ChatEvent>('chat:event')
 // CLI chat (experimental): the interactive CLI in a hidden pty
 // (services/clichat). Payload shapes: src/renderer/src/lib/cliChat.ts.
 const onCliChatEvent = multiplexed<{ key: string; kind: string } & Record<string, unknown>>('clichat:event')
@@ -151,7 +104,6 @@ export interface CliChatStartOpts {
   // The chat settings a chat launches with (see chat.start).
   mcpDisabled?: string[]
   toolsDenied?: string[]
-  autocompact?: string
   globalPrompt?: string
   agent?: string
   /** 'codex' runs the interactive codex; claude otherwise. */
@@ -363,48 +315,10 @@ const api = {
     onEvent: onCliChatEvent
   },
   chat: {
-    start: (
-      key: string,
-      opts: {
-        cwd: string
-        resume?: string
-        /** Resume into a COPY, leaving the original session as it was. */
-        fork?: boolean
-        model?: string
-        permissionMode?: string
-        mcpDisabled?: string[]
-        globalPrompt?: string
-        agent?: string
-        configDir?: string
-        // Which agent backs the pane. Absent = Claude Code.
-        cli?: 'claude' | 'codex'
-        /** Built-in tools to leave out of --allowedTools (the CLI then asks). */
-        toolsDenied?: string[]
-        /** 'auto' or a token count (100K–1M). */
-        autocompact?: string
-      }
-    ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
-    // Images go as content blocks in the same message — the model sees them
-    // in that turn, with no Read call on a pasted path.
-    // `turn` identifies this message so its answer can be told apart from a
-    // previous turn's late one (see lib/chatTurns.isStaleEvent).
-    send: (
-      key: string,
-      text: string,
-      images?: Array<{ mediaType: string; data: string; name?: string }>,
-      turn?: string
-    ): void => ipcRenderer.send('chat:send', key, text, images, turn),
-    interrupt: (key: string): void => ipcRenderer.send('chat:interrupt', key),
-    // Whether a pane still has an agent behind it (see chat:alive).
-    alive: (key: string): Promise<{ alive: boolean; running: boolean }> =>
-      ipcRenderer.invoke('chat:alive', key),
     // Replace the CLI behind a pane (or every pane) with a fresh process that
     // resumes the same conversation — how a CLI update reaches open panes.
     restart: (key?: string): Promise<{ restarted: number; busy: number }> =>
       ipcRenderer.invoke('chat:restart', key),
-    setModel: (key: string, model: string): void => ipcRenderer.send('chat:setModel', key, model),
-    setMode: (key: string, mode: string): void => ipcRenderer.send('chat:setMode', key, mode),
-    stop: (key: string): void => ipcRenderer.send('chat:stop', key),
     title: (message: string): Promise<string> => ipcRenderer.invoke('chat:title', message),
     detectClis: (): Promise<
       Array<{ name: string; cmd: string; path: string; version: string | null }>
@@ -492,7 +406,6 @@ const api = {
       configDir?: string
     ): Promise<{ ok: boolean; output: string }> =>
       ipcRenderer.invoke('chat:mcpLogout', cwd, name, configDir),
-    onEvent: (cb: (e: ChatEvent) => void): (() => void) => onChatEvent(cb)
   },
   // Real Chromium browser: each tab is a main-process WebContentsView. The panel
   // draws chrome and reports the viewport rect; ops/results go over IPC.
@@ -1308,6 +1221,8 @@ const api = {
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // Whether the pointer is over the pet's own window (screen coordinates).
     cursorInside: (): Promise<boolean> => ipcRenderer.invoke('pet:cursorInside'),
+    // The floating pet's window on screen (null when the pet is inside riven's window).
+    windowBox: (): Promise<{ x: number; y: number; w: number; h: number } | null> => ipcRenderer.invoke('pet:windowBox'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),
     // A hand drag of the bare pet: main follows the cursor between start and end.
@@ -1329,12 +1244,6 @@ const api = {
     copy: (text: string): Promise<void> => ipcRenderer.invoke('pet:copy', text),
     // A press of the pet's A / B / C, sent from wherever the shortcut fired and
     // delivered to whichever window is showing the device.
-    press: (key: 'a' | 'b' | 'c'): Promise<void> => ipcRenderer.invoke('pet:press', key),
-    onPress: (cb: (key: 'a' | 'b' | 'c') => void): (() => void) => {
-      const l = (_e: unknown, key: 'a' | 'b' | 'c'): void => cb(key)
-      ipcRenderer.on('pet:press', l)
-      return () => ipcRenderer.removeListener('pet:press', l)
-    },
     // Float the pet's window above other apps, or let it sit among them. The app
     // applies what it has persisted (setOnTop); the pet window asks for a change
     // (askOnTop) because it is not the window that may write settings.json.

@@ -187,8 +187,8 @@ pub async fn pet_resize(height: Option<f64>, width: Option<f64>) -> CmdResult<()
 }
 
 #[tauri::command]
-pub async fn pet_press(key: Option<Value>) -> CmdResult<()> {
-  blocking(move || pet::press(&key.unwrap_or(Value::Null))).await
+pub async fn pet_window_box() -> CmdResult<Option<Value>> {
+  blocking(move || pet::window_box()).await
 }
 
 #[tauri::command]

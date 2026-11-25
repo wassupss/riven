@@ -1071,7 +1071,6 @@ fn main() {
       services::pty::init(app.handle());
       services::clichat::init(app.handle());
       services::agentcli::init(app.handle());
-      services::chat::init(app.handle());
       services::lsp::init(app.handle());
       services::debug::init(app.handle());
       // Click routing, and the notification permission request (not in the
@@ -1121,7 +1120,6 @@ fn main() {
       services::mcp::shutdown();
       services::clichat::shutdown();
       services::pty::shutdown();
-      services::chat::shutdown();
       services::lsp::shutdown();
       services::debug::shutdown();
       services::power::release();

@@ -11,7 +11,8 @@
 //   node tauri/package.mjs --dry-run    print the build step and the tauri command, run nothing
 //
 // Identity: tauri.bundle.json is the release one, riven.app with bundle id
-// dev.riven.app, the Electron app's (electron-builder.yml appId). Run as that
+// dev.riven.app, the id the Electron app shipped with (its data folder and keychain
+// item are kept, so the move to Tauri reads them as they were). Run as that
 // id the app uses Electron's data folder and keychain item
 // (src-tauri/src/services/paths.rs, safe_storage.rs). A local package is
 // therefore built WITHOUT it by default: tauri.local.json puts back

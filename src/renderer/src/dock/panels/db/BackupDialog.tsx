@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useHost } from '../../../lib/hostWindow'
-import type { ArchiveInfo, BackupOptions, DumpContent, DumpFormat, RestoreOptions, ToolInfo } from '../../../../../main/db/dumpArgs'
+import type { ArchiveInfo, BackupOptions, DumpContent, DumpFormat, RestoreOptions, ToolInfo } from '../../../../../shared/db/dumpArgs'
 import { useT } from '../../../i18n'
 import { dbUid } from '../../../state/db'
 import { Button, NumberInput, Segmented, Select, Switch, TextInput } from '../../../components/ui/Controls'

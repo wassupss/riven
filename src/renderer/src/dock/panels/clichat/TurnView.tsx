@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useState, type ReactNode } from 'react'
 import { ChevronRight, FileText, Forward } from 'lucide-react'
 import Markdown from '../../../components/Markdown'
 import { viewImage } from '../../../components/ImageLightbox'
@@ -127,13 +127,17 @@ const ToolRowView = memo(function ToolRowView({
   const state = running ? 'running' : tool.result?.isError ? 'error' : 'done'
   const code = toolCode(tool.name, tool.input)
   const isAgent = tool.name === 'Agent' || tool.name === 'Task'
+  const t = useT()
+  const lines = tool.result ? (tool.result.text ? tool.result.text.split('\n').length : 0) : 0
   return (
     // data-agent-id: the running-agents strip scrolls to it.
     <details className={`cli-chat-tool ${state}`} data-agent-id={isAgent ? tool.toolId : undefined}>
       <summary>
         <ChevronRight size={12} className="cli-chat-chev" />
+        <span className={`cli-chat-tool-dot ${state}`} aria-hidden />
         <span className="cli-chat-tool-name">{tool.name}</span>
         {summary && <span className="cli-chat-tool-arg">{summary}</span>}
+        {lines > 0 && <span className="cli-chat-tool-lines">{t('clichat.toolLines', { n: lines })}</span>}
       </summary>
       {agent && <AgentLine a={agent} />}
       {code && <ChatCode code={code.code} diff={code.diff} path={code.path} />}
@@ -145,11 +149,17 @@ const ToolRowView = memo(function ToolRowView({
 export const TurnView = memo(function TurnView({
   chatKey,
   turn,
-  agents
+  agents,
+  hidden,
+  tail
 }: {
   chatKey: string
   turn: Turn
   agents: Record<string, AgentProgress>
+  /** Text blocks drawn by the live preview instead (lib/cliChat previewHides). */
+  hidden?: ReadonlySet<string>
+  /** The live preview of the reply in flight: drawn where its transcript text goes. */
+  tail?: ReactNode
 }): JSX.Element {
   const t = useT()
   // The turn's answer, for the copy button.
@@ -160,11 +170,12 @@ export const TurnView = memo(function TurnView({
   return (
     <>
       {turn.user && <UserBubble chatKey={chatKey} user={turn.user} />}
-      {(turn.blocks.length > 0 || turn.usage) && (
+      {(turn.blocks.length > 0 || turn.usage || tail) && (
         <div className="chat-turn assistant cli-chat-assistant">
           {turn.blocks.map((b) => {
             switch (b.kind) {
               case 'text':
+                if (hidden?.has(b.key)) return null
                 return (
                   <div key={b.key} className="chat-assistant-text">
                     <Markdown text={b.text} />
@@ -200,6 +211,7 @@ export const TurnView = memo(function TurnView({
                 )
             }
           })}
+          {tail}
           {turn.usage && (
             <div className="cli-chat-usage">
               {t('clichat.usage', {

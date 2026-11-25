@@ -75,10 +75,6 @@ export interface Settings {
   // terminal. Only Claude has a native chat driver so far; others fall back to a
   // terminal regardless.
   agentChatUI: boolean
-  // What a new chat pane runs: 'cli' = the interactive CLI (claude, codex)
-  // in a hidden pty drawn as a chat (services/clichat); 'native' = the
-  // headless stream-json driver (services/chat). Existing panes keep theirs.
-  chatEngine: 'cli' | 'native'
   // A fixed instruction appended to every agent chat (like CLAUDE.md but app-wide).
   // Mirrors native's `prompt.global`.
   globalPrompt: string
@@ -105,7 +101,6 @@ export interface Settings {
    * When a chat compacts its context: 'auto' (the CLI's own choice — near the
    * model's full window, up to 1M) or a token count. See agentChat's spawn.
    */
-  autocompact: string
   // Desktop notifications when a background agent turn finishes.
   notifications: boolean
   // Send anonymous crash reports (stored pref; parity with native).
@@ -184,7 +179,6 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
   agentChatUI: true,
-  chatEngine: 'cli',
   globalPrompt: '',
   mcpDisabledTools: [],
   browserSearch: 'https://www.google.com/search?q={q}',
@@ -193,7 +187,6 @@ export const DEFAULT_SETTINGS: Settings = {
   claudeProfileByWorkspace: {},
   defaultChatModel: 'default',
   defaultPermissionMode: 'acceptEdits',
-  autocompact: '200000',
   notifications: true,
   crashReporting: true,
   uiScale: 1,

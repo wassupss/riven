@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, RefreshCw, Trash2, Users } from 'lucide-react'
-import type { ObjectKind, RoleGrant, RoleInfo } from '../../../../../main/db/types'
-import { planText } from '../../../../../main/db/ddl'
+import type { ObjectKind, RoleGrant, RoleInfo } from '../../../../../shared/db/types'
+import { planText } from '../../../../../shared/db/ddl'
 import {
   ROLE_FLAGS,
   alterRoleSql,
@@ -12,7 +12,7 @@ import {
   roleDraft,
   roleProblems,
   type RoleDraft
-} from '../../../../../main/db/privs'
+} from '../../../../../shared/db/privs'
 import { useT } from '../../../i18n'
 import { useDb, type RolesTab } from '../../../state/db'
 import { Button, Switch, TextInput } from '../../../components/ui/Controls'

@@ -99,6 +99,7 @@ export type CliEvent = { key: string } & (
   | { kind: 'exit'; code: number }
   // A turn ended (Stop hook, interrupt, the CLI exiting mid-turn): what it
   // answered, for whoever asked (state/cliChats).
+  | { key: string; kind: 'settle' }
   | { kind: 'turnDone'; reply: string; error: string | null; interrupted: boolean }
 )
 
@@ -106,6 +107,8 @@ export interface CliModel {
   items: CliItem[]
   state: CliState
   preview: string | null
+  /** Transcript text items that landed while `preview` was still on screen: not drawn until it is gone. */
+  previewHides: string[]
   permissions: CliPermission[]
   questions: CliPermission[]
   agents: Record<string, AgentProgress>
@@ -117,6 +120,7 @@ export const initialModel = (): CliModel => ({
   items: [],
   state: { busy: false, waiting: false, ready: false, blocked: null, sessionId: null, dead: false, terminal: false },
   preview: null,
+  previewHides: [],
   permissions: [],
   questions: [],
   agents: {},
@@ -133,21 +137,51 @@ export function reduce(m: CliModel, e: CliEvent): CliModel {
       // An append can repeat keys after a reattach race; keep the first.
       const seen = new Set(m.items.map((i) => i.key))
       const fresh = e.items.filter((i) => !seen.has(i.key))
-      return fresh.length ? { ...m, items: [...m.items, ...fresh] } : m
+      if (!fresh.length) return m
+      const items = [...m.items, ...fresh]
+      if (m.preview == null) return { ...m, items }
+      // The reply on screen is the preview. Its transcript copy lands now: keep the
+      // preview until it has been drawn out (LivePreview), and hide the copy until
+      // then, so the answer never vanishes and is never shown twice.
+      const landed = fresh.filter((i): i is Extract<CliItem, { kind: 'text' }> => i.kind === 'text')
+      if (landed.length && fresh.length === landed.length) {
+        // The whole reply so far (its text items since the person's last message) is the
+        // target: the preview draws out the same paragraphs the transcript then shows,
+        // none of them alone, so nothing pops in at the end.
+        let start = items.length - 1
+        while (start >= 0 && items[start].kind !== 'user') start--
+        const reply = items.slice(start + 1).filter((i): i is Extract<CliItem, { kind: 'text' }> => i.kind === 'text')
+        return {
+          ...m,
+          items,
+          preview: reply.map((i) => i.text).join('\n\n'),
+          previewHides: reply.map((i) => i.key)
+        }
+      }
+      // Anything else (a tool, a thought) means the streamed message is over and
+      // the next one is not the preview's: its text goes in order, the preview goes.
+      return { ...m, items, preview: null, previewHides: [] }
     }
     case 'state': {
       const { key: _key, kind: _kind, ...state } = e
       return {
         ...m,
         state,
-        // A finished or stopped turn has nothing left streaming.
-        preview: state.busy ? m.preview : null,
+        // The turn ending does not clear the preview: the Stop hook can arrive a tick
+        // before the transcript's text does, and clearing here made the reply vanish and
+        // come back whole. The page draws the preview out and settles it ('settle').
+        preview: m.preview,
+        previewHides: m.previewHides,
         permissions: state.dead ? [] : m.permissions,
         questions: state.dead ? [] : m.questions
       }
     }
+    case 'settle':
+      return { ...m, preview: null, previewHides: [] }
     case 'preview':
-      return m.preview === e.text ? m : { ...m, preview: e.text }
+      if (m.preview === e.text) return m
+      // A new streamed message: whatever the old one left hidden goes back in order.
+      return { ...m, preview: e.text, previewHides: [] }
     case 'permission':
       if (m.permissions.some((p) => p.id === e.id)) return m
       return { ...m, permissions: [...m.permissions, { id: e.id, tool: e.tool ?? '?', input: e.input }] }

@@ -8748,17 +8748,6 @@ select {
 .ex-row.git-conflict .ex-git-badge { color: var(--git-conflict); }
 
 /* ── Changes timeline (agent-edit summary) ─────────────────────────────── */
-.changes-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  background: var(--bg-2);
-  /* This panel is docked: its width is whatever the user dragged it to, with no
-     relation to the window's. Everything narrow-width below is therefore keyed
-     off the PANEL, not the viewport. */
-  container-type: inline-size;
-}
 .changes-head {
   display: flex;
   align-items: center;
@@ -8962,19 +8951,6 @@ select {
   font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
 }
-.changes-pill {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.changes-pill-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--accent);
-}
-
 /* ── Settings → About + update status ──────────────────────────────────── */
 .about {
   display: flex;

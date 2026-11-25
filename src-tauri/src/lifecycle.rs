@@ -131,7 +131,7 @@ pub fn korean(settings: Option<&str>) -> bool {
 /// CLI chat) + terminal agents working. A CLI chat runs in a hidden pty that
 /// can look like a working terminal too: it is counted once, as a chat.
 pub fn busy() -> (usize, usize) {
-  let chats = crate::services::chat::running_count() + crate::services::clichat::running_count();
+  let chats = crate::services::clichat::running_count();
   let terms = crate::services::pty::working_keys().iter().filter(|k| !crate::services::clichat::owns(k)).count();
   (chats, terms)
 }

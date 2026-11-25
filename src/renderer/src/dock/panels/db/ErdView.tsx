@@ -12,7 +12,7 @@ import {
   type Box,
   type ErdModel,
   type ErdTable
-} from '../../../../../main/db/erd'
+} from '../../../../../shared/db/erd'
 import { useT } from '../../../i18n'
 import { useDb, type ErdTab } from '../../../state/db'
 import { TextInput } from '../../../components/ui/Controls'

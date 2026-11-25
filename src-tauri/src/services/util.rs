@@ -14,15 +14,6 @@ pub use crate::services::fsx::{utf16_len, utf16_prefix};
 
 // ---- values -------------------------------------------------------------------
 
-pub fn str_of<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
-  v.get(k).and_then(Value::as_str)
-}
-
-/// `typeof v === 'string' ? v : ''`
-pub fn s<'a>(v: &'a Value, k: &str) -> &'a str {
-  str_of(v, k).unwrap_or("")
-}
-
 /// JS truthiness of a JSON value.
 /// String.prototype.trim: whitespace and the BOM.
 pub fn js_trim(s: &str) -> &str {
@@ -63,32 +54,6 @@ fn num_string(n: &serde_json::Number) -> String {
   }
 }
 
-/// `String(v ?? dflt)`
-pub fn string_or(v: Option<&Value>, dflt: &str) -> String {
-  match v {
-    None | Some(Value::Null) => dflt.to_string(),
-    Some(x) => js_string(x),
-  }
-}
-
-/// `Number(v ?? 0)` (NaN reads as 0: the page only shows these).
-pub fn num_or0(v: Option<&Value>) -> f64 {
-  match v {
-    None | Some(Value::Null) => 0.0,
-    Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
-    Some(Value::Bool(b)) => f64::from(u8::from(*b)),
-    Some(Value::String(s)) => {
-      let t = s.trim();
-      if t.is_empty() {
-        0.0
-      } else {
-        t.parse().unwrap_or(0.0)
-      }
-    }
-    Some(_) => 0.0,
-  }
-}
-
 /// A JSON number for an f64 that is usually an integer (no trailing ".0").
 pub fn jnum(f: f64) -> Value {
   if f.fract() == 0.0 && f.abs() < 9.0e15 {
@@ -112,26 +77,8 @@ pub fn slice(s: &str, n: usize) -> String {
   utf16_prefix(s, n).to_string()
 }
 
-/// `s.split('\n')[0]`
-pub fn first_line(s: &str) -> &str {
-  s.split('\n').next().unwrap_or("")
-}
-
 pub fn home() -> PathBuf {
   crate::services::paths::home()
-}
-
-/// `p.startsWith(HOME) ? '~' + rest : p`
-pub fn shorten(p: &str) -> String {
-  let h = std::env::var("HOME").unwrap_or_default();
-  if !h.is_empty() && p.starts_with(&h) {
-    format!("~{}", &p[h.len()..])
-  } else if h.is_empty() && p.starts_with('~') {
-    // process.env.HOME || '~' with an empty slice: Node's quirk, harmless.
-    format!("~{p}")
-  } else {
-    p.to_string()
-  }
 }
 
 pub fn uuid() -> String {
@@ -181,19 +128,6 @@ pub async fn resolve_bin(cmd: &str) -> Option<String> {
   tauri::async_runtime::spawn_blocking(move || {
     let path = crate::services::shell_env::login_path();
     path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(&cmd)).find(|p| executable(p)).map(|p| p.to_string_lossy().into_owned())
-  })
-  .await
-  .ok()
-  .flatten()
-}
-
-/// binIdentity: real path + mtime, so an updated CLI reads as a different one.
-pub async fn bin_identity(cmd: Option<&str>) -> Option<String> {
-  let cmd = cmd?.to_string();
-  tokio::task::spawn_blocking(move || {
-    let real = std::fs::canonicalize(&cmd).ok()?;
-    let meta = std::fs::metadata(&real).ok()?;
-    Some(format!("{}#{}", real.to_string_lossy(), mtime_ms(&meta).round() as i64))
   })
   .await
   .ok()

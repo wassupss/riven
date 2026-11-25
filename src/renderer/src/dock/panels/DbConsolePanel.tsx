@@ -24,18 +24,18 @@ import {
   X,
 } from "lucide-react";
 import "../../styles/db-panel.css";
-import type { DbKind, QueryResult } from "../../../../main/db/types";
+import type { DbKind, QueryResult } from "../../../../shared/db/types";
 import {
   splitStatements,
   statements,
   unsafeStatement,
-} from "../../../../main/db/sqlText";
+} from "../../../../shared/db/sqlText";
 import {
   explainSql,
   parsePlan,
   readOnlyStatement,
-} from "../../../../main/db/explain";
-import { caps } from "../../../../main/db/engines";
+} from "../../../../shared/db/explain";
+import { caps } from "../../../../shared/db/engines";
 import { editorTheme } from "../../editor/highlight";
 import { useT } from "../../i18n";
 import {

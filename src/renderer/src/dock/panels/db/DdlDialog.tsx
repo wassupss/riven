@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useHost } from '../../../lib/hostWindow'
-import { planText, type DdlPlan } from '../../../../../main/db/ddl'
+import { planText, type DdlPlan } from '../../../../../shared/db/ddl'
 import { useT } from '../../../i18n'
 import { Button, Select, Switch, TextArea, TextInput } from '../../../components/ui/Controls'
 import { Row, errText } from './ConnectionForm'

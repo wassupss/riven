@@ -1,7 +1,7 @@
 // Where the tokens went, from Claude Code's own session transcripts.
 //
 // Pure: takes the lines of one .jsonl transcript and returns numbers, so the
-// token work (autocompact, MCP diet, result caps) can be measured before and
+// token work (MCP diet, result caps) can be measured before and
 // after from the same logs rather than argued about. Reads nothing, spends
 // nothing — see scripts/token-audit.mjs for the command that walks the files.
 

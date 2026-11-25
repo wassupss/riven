@@ -32,7 +32,7 @@ export default function PetChatDialog(): JSX.Element | null {
   return <Dialog key={open} bornAt={open} />
 }
 
-function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
+function Dialog({ bornAt, panel = false }: { bornAt: number; panel?: boolean }): JSX.Element {
   const t = useT()
   const [model, dispatch] = useReducer(reduce, undefined, initialModel)
   const [key, setKey] = useState<string | null>(null)
@@ -44,6 +44,11 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { state } = model
+  // A request to open this conversation again (the shortcut): the caret goes to its field.
+  const seq = usePetChat((s) => s.seq)
+  useEffect(() => {
+    if (panel && seq) inputRef.current?.focus()
+  }, [seq, panel])
 
   // Events first, then the session: nothing it says on attaching is missed.
   useEffect(() => {
@@ -65,6 +70,7 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
   }, [bornAt])
 
   useEffect(() => {
+    if (panel) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && !composing.current) closePetChat()
     }
@@ -94,9 +100,8 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
     if (!state.terminal) window.api.cliChat.terminal(chatKey, true)
   }
 
-  return (
-    <div className="modal-overlay" onClick={closePetChat}>
-      <div className="modal pet-chat-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={pet?.title}>
+  const body = (
+    <>
         <div className="modal-header pet-chat-head">
           <span className="pet-chat-title">
             <span className={`cli-chat-dot${state.busy ? ' busy' : state.waiting || state.menu ? ' waiting' : ''}`} />
@@ -115,6 +120,7 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
                 <SquareTerminal size={14} />
               </button>
             )}
+            {!panel && (
             <button
               type="button"
               className="pet-chat-icon"
@@ -124,6 +130,7 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
             >
               <X size={14} />
             </button>
+            )}
           </span>
         </div>
         <div className="chat-panel cli-chat pet-chat-body">
@@ -207,7 +214,19 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
             </>
           )}
         </div>
+    </>
+  )
+  if (panel) return <div className="assistant-panel">{body}</div>
+  return (
+    <div className="modal-overlay" onClick={closePetChat}>
+      <div className="modal pet-chat-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={pet?.title}>
+        {body}
       </div>
     </div>
   )
+}
+
+/** A pet assistant's conversation as a dock panel (the same body as the dialog). */
+export function AssistantChat({ bornAt }: { bornAt: number }): JSX.Element {
+  return <Dialog key={bornAt} bornAt={bornAt} panel />
 }

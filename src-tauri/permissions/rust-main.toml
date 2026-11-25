@@ -54,13 +54,6 @@ permissions = [
   "allow-browser-suggest",
   "allow-browser-bar-menu",
   "allow-browser-pick-element",
-  "allow-chat-start",
-  "allow-chat-send",
-  "allow-chat-alive",
-  "allow-chat-interrupt",
-  "allow-chat-set-model",
-  "allow-chat-set-mode",
-  "allow-chat-stop",
   "allow-chat-title",
   "allow-clichat-start",
   "allow-clichat-restart",
@@ -168,7 +161,7 @@ permissions = [
   "allow-pet-is-on-top",
   "allow-pet-open",
   "allow-pet-resize",
-  "allow-pet-press",
+  "allow-pet-window-box",
   "allow-pet-set-break",
   "allow-pet-set-on-top",
   "allow-pet-ask-on-top",
@@ -523,41 +516,6 @@ commands.allow = ["browser_bar_menu"]
 identifier = "allow-browser-pick-element"
 description = "Allows browser_pick_element."
 commands.allow = ["browser_pick_element"]
-
-[[permission]]
-identifier = "allow-chat-start"
-description = "Allows chat_start."
-commands.allow = ["chat_start"]
-
-[[permission]]
-identifier = "allow-chat-send"
-description = "Allows chat_send."
-commands.allow = ["chat_send"]
-
-[[permission]]
-identifier = "allow-chat-alive"
-description = "Allows chat_alive."
-commands.allow = ["chat_alive"]
-
-[[permission]]
-identifier = "allow-chat-interrupt"
-description = "Allows chat_interrupt."
-commands.allow = ["chat_interrupt"]
-
-[[permission]]
-identifier = "allow-chat-set-model"
-description = "Allows chat_set_model."
-commands.allow = ["chat_set_model"]
-
-[[permission]]
-identifier = "allow-chat-set-mode"
-description = "Allows chat_set_mode."
-commands.allow = ["chat_set_mode"]
-
-[[permission]]
-identifier = "allow-chat-stop"
-description = "Allows chat_stop."
-commands.allow = ["chat_stop"]
 
 [[permission]]
 identifier = "allow-chat-title"
@@ -1095,9 +1053,9 @@ description = "Allows pet_resize."
 commands.allow = ["pet_resize"]
 
 [[permission]]
-identifier = "allow-pet-press"
-description = "Allows pet_press."
-commands.allow = ["pet_press"]
+identifier = "allow-pet-window-box"
+description = "Allows pet_window_box."
+commands.allow = ["pet_window_box"]
 
 [[permission]]
 identifier = "allow-pet-set-break"

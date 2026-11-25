@@ -2,7 +2,7 @@
 // one way of running them: their past conversations on disk (history.rs),
 // the MCP servers they see (mcp.rs), whether they are installed, their
 // accounts and updates (cli.rs), and the launch arguments every chat engine
-// builds the same way (the allow list, --autocompact).
+// builds the same way (the allow list).
 //
 // The chat engines (services/clichat, the interactive CLI in a hidden pty,
 // and services/chat, the headless stream-json driver) use this; nothing here
@@ -99,24 +99,6 @@ pub fn allowed_base(denied: &Option<Vec<String>>) -> String {
     None => DEFAULT_ALLOWED.into(),
     Some(off) => DEFAULT_ALLOWED.split(',').filter(|n| !off.iter().any(|o| o == n)).collect::<Vec<_>>().join(","),
   }
-}
-
-/// --autocompact: 'auto' passes nothing; outside 100K-1M is dropped (the CLI
-/// would refuse to start).
-pub fn autocompact_arg(v: Option<&str>) -> Option<String> {
-  let v = v.unwrap_or("").trim().to_lowercase();
-  if v.is_empty() || v == "auto" {
-    return None;
-  }
-  let re = regex::Regex::new(r"^(\d+(?:\.\d+)?)(k|m)?$").unwrap();
-  let m = re.captures(&v)?;
-  let mul = match m.get(2).map(|x| x.as_str()) {
-    Some("m") => 1_000_000.0,
-    Some("k") => 1_000.0,
-    _ => 1.0,
-  };
-  let n = (m[1].parse::<f64>().ok()? * mul).round();
-  (100_000.0..=1_000_000.0).contains(&n).then(|| format!("{}", n as i64))
 }
 
 // ---- past conversations (chat:sessions and friends) ----------------------------------------
@@ -251,10 +233,6 @@ mod tests {
 
   #[test]
   fn args() {
-    assert_eq!(autocompact_arg(Some("auto")), None);
-    assert_eq!(autocompact_arg(Some("250k")), Some("250000".into()));
-    assert_eq!(autocompact_arg(Some("1.5m")), None);
-    assert_eq!(autocompact_arg(Some("1m")), Some("1000000".into()));
     assert!(!allowed_base(&Some(vec!["Bash".into()])).contains("Bash,"));
     assert_eq!(allowed_base(&None), DEFAULT_ALLOWED);
   }

@@ -17,9 +17,9 @@ import {
   Workflow
 } from 'lucide-react'
 import '../../styles/db-panel.css'
-import type { ConnectionInfo, DbObject, ObjectKind, SchemaInfo } from '../../../../main/db/types'
-import { quoteIdent } from '../../../../main/db/sqlText'
-import { caps } from '../../../../main/db/engines'
+import type { ConnectionInfo, DbObject, ObjectKind, SchemaInfo } from '../../../../shared/db/types'
+import { quoteIdent } from '../../../../shared/db/sqlText'
+import { caps } from '../../../../shared/db/engines'
 import {
   canRename,
   createDatabaseSql,
@@ -32,7 +32,7 @@ import {
   truncateSql,
   type DropKind,
   type SqlEngine
-} from '../../../../main/db/ddl'
+} from '../../../../shared/db/ddl'
 import { useDb } from '../../state/db'
 import { useT } from '../../i18n'
 import ContextMenu, { type MenuItem } from '../../components/ContextMenu'

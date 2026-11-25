@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { storeGet, storeSet, type StoreName } from '../lib/fileStore'
-import type { ConnectionInfo, ObjectKind, QueryResult, TxStatus } from '../../../main/db/types'
+import type { ConnectionInfo, ObjectKind, QueryResult, TxStatus } from '../../../shared/db/types'
 import { t } from '../i18n'
-import type { ResultView } from '../../../main/db/sqlText'
-import type { Plan } from '../../../main/db/explain'
+import type { ResultView } from '../../../shared/db/sqlText'
+import type { Plan } from '../../../shared/db/explain'
 
 // Shared state of the two DB panels: the saved connections (owned by main, cached
 // here) and the SQL console's tabs. The explorer opens tabs; the console shows

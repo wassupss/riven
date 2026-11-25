@@ -16,8 +16,8 @@ import { useWorkspaceStatus } from './workspaceStatus'
 
 // The CLI chat as the rest of riven sees it: one app-level listener on
 // 'clichat:event' for every CLI chat pane of this window (lib/cliChatLive has
-// the pure half). It does what the headless ChatPanel does for itself from
-// inside the panel:
+// the pure half). It does for the pane what the panel used to do from inside
+// itself:
 //
 // - the roster (rail, workspace cards, tray, the pet's busy count) and the
 //   pane status: busy, waiting on the person, a completion until it is seen;

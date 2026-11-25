@@ -2,17 +2,13 @@ name: Release (Tauri, macOS)
 
 # The Tauri riven.app (Rust main, src-tauri) for macOS: one universal .app
 # (aarch64 + x86_64), Developer ID signed, notarized and stapled, with assets
-# for both update feeds (docs/tauri-rust-main.md, 9-7):
-#   Electron's feed (GitHub Releases "latest", electron-updater):
-#     riven-<v>-universal-mac.zip + latest-mac.yml. This is how Electron users
-#     move to Tauri once (9-6).
-#   Tauri's feed (tauri-plugin-updater): riven-<v>-universal.app.tar.gz + .sig
-#     + latest.json, also copied to the fixed "tauri-feed" release, the URL the
-#     app has built in (RIVEN_UPDATE_FEED).
+# with the Tauri updater's assets (docs/tauri-rust-main.md): riven-<v>-universal.app.tar.gz
+# + .sig + latest.json, also copied to the fixed "tauri-feed" release, the URL
+# the app has built in (RIVEN_UPDATE_FEED). Electron and Windows are not built.
 #
 # Triggers: a tauri-v* tag (draft release only), or workflow_dispatch (a draft
 # by default; publish=true publishes, marks it latest and updates tauri-feed).
-# It never runs on Electron's v* tags (release.yml), and release.yml never runs
+
 # on tauri-v*: GitHub tag filters are globs anchored at the start.
 on:
   push:
@@ -25,7 +21,7 @@ on:
         required: true
         type: string
       publish:
-        description: 'Publish now (latest release = Electron feed, and update tauri-feed/latest.json). Off: draft only'
+        description: 'Publish now (marks the release latest, updates tauri-feed/latest.json). Off: draft only'
         required: false
         type: boolean
         default: false
@@ -119,8 +115,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # The renderer is the Electron renderer build (electron-vite), so the same
-      # install as release.yml.
+      # The renderer build (vite, tauri/build.mjs) and the Tauri app's npm deps.
       - name: Install dependencies
         run: npm ci
 
@@ -159,7 +154,7 @@ jobs:
       - name: Build, sign, notarize, staple
         env:
           RIVEN_TAURI_BUNDLE_CONFIG: ${{ runner.temp }}/tauri-release.json
-          # Developer ID certificate: the same secrets electron-builder uses (CSC_LINK / CSC_KEY_PASSWORD there).
+          # Developer ID certificate.
           APPLE_CERTIFICATE: ${{ secrets.MAC_CERT_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           APPLE_SIGNING_IDENTITY: Developer ID Application
@@ -172,9 +167,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node tauri/package.mjs --release --target "$TARGET"
 
-      # What Squirrel.Mac and the keychain item's access list check: the new
-      # bundle must satisfy the Electron app's designated requirement (same
-      # bundle id, same team). Also Gatekeeper on a notarized, stapled app.
+      # The keychain items riven keeps (secrets, the remote key) are matched to the
+      # app's designated requirement (same bundle id, same team), so the new bundle
+      # must satisfy it. Also Gatekeeper on a notarized, stapled app.
       - name: Verify the bundle
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -210,24 +205,6 @@ jobs:
             --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
             --out dist-tauri
 
-      # The release becomes GitHub's "latest", which is also where the Windows
-      # Electron app looks for latest.yml. Windows stays on Electron (9-6), so
-      # carry the newest Electron release's Windows files over, or Windows
-      # updates would 404 while this release is latest.
-      - name: Carry the Windows (Electron) update files
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          WIN_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0]')
-          if [ -z "$WIN_TAG" ]; then
-            echo "::warning::no Electron v* release found; Windows files not carried"
-            exit 0
-          fi
-          echo "Windows files from $WIN_TAG"
-          gh release download "$WIN_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-tauri \
-            --pattern 'latest.yml' --pattern '*.exe' --pattern '*.exe.blockmap'
-          ls -la dist-tauri
-
       - uses: actions/upload-artifact@v4
         with:
           name: riven-tauri-${{ env.VERSION }}-mac
@@ -251,8 +228,8 @@ jobs:
           fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" dist-tauri/*
 
-      # The Tauri feed: a fixed release (prerelease, so never "latest" and never
-      # seen by electron-updater) whose latest.json is replaced each release.
+      # The Tauri feed: a fixed release (prerelease, so never "latest") whose
+      # latest.json is replaced each release.
       - name: Update the Tauri feed
         if: env.PUBLISH == 'true'
         env:

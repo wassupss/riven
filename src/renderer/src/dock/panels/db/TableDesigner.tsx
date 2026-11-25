@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { KeyRound, Plus, RotateCcw, Trash2 } from 'lucide-react'
-import type { TableInfo } from '../../../../../main/db/types'
+import type { TableInfo } from '../../../../../shared/db/types'
 import { invalidateCompletion } from './sqlComplete'
 import {
   FK_ACTIONS,
@@ -19,7 +19,7 @@ import {
   type ConstraintType,
   type IndexDraft,
   type TableDraft
-} from '../../../../../main/db/ddl'
+} from '../../../../../shared/db/ddl'
 import { useT } from '../../../i18n'
 import { useDb, type DesignTab } from '../../../state/db'
 import { Button, Select, Switch, TextInput } from '../../../components/ui/Controls'
