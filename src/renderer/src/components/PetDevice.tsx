@@ -1,5 +1,6 @@
 import { announceNest, servePet } from '../lib/petCommand'
 import { balloonText, defaultAssistant, isAssistant } from '../lib/petAssistant'
+import { PET_MOVED } from '../lib/petAssistBus'
 import {
   askAssistant,
   chooseAssistant,
@@ -1093,6 +1094,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     el.style.top = `${y}px`
     el.style.right = 'auto'
     el.style.bottom = 'auto'
+    // The pet's box moved (not its size): the assistant card beside it follows.
+    window.dispatchEvent(new Event(PET_MOVED))
   }, [])
 
   // Dragging listens on the WINDOW, not on the device.
