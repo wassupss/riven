@@ -23,6 +23,7 @@ import {
   LayoutGrid,
   Maximize2,
   Minimize2,
+  Move,
   PawPrint,
   Plus,
   RotateCcw,
@@ -321,7 +322,20 @@ function InlineAsk({ text, yes, onYes, onNo }: { text: string; yes: string; onYe
 type Screen = 'start' | 'edit'
 type View = 'crop' | 'cutout'
 /** A tool of the 12x12 editor (species made before the faithful picture): a role, the eraser or the face. */
-type Tool = Role | 'erase' | 'face'
+type Tool = Role | 'erase' | 'face' | 'move'
+
+/** The whole picture moved by whole cells; what leaves the edge is dropped (the face is moved and kept on the grid by the caller). */
+const shiftArt = (art: string[], dx: number, dy: number): string[] =>
+  art.map((_, y) => {
+    const sy = y - dy
+    if (sy < 0 || sy >= ART) return '.'.repeat(ART)
+    let row = ''
+    for (let x = 0; x < ART; x++) {
+      const sx = x - dx
+      row += sx < 0 || sx >= ART ? '.' : art[sy][sx]
+    }
+    return row
+  })
 /** What the bottom bar offers once the species is saved. */
 type After = null | 'saved' | 'raised'
 
@@ -598,6 +612,8 @@ export default function PetMaker({
   // ---- the 12x12 editor (species made before the faithful picture) ----
   const [gridRef, gridFit] = useFitSquare()
   const drawing = useRef(false)
+  // A move in progress: where the drag began, and the picture and face as they were then.
+  const moveRef = useRef<{ x: number; y: number; cell: number; art: string[]; face: { x: number; y: number }; dx: number; dy: number } | null>(null)
   const applyTool = (e: ReactPointerEvent<HTMLDivElement>): void => {
     const r = e.currentTarget.getBoundingClientRect()
     const x = Math.floor(((e.clientX - r.left) / r.width) * ART)
@@ -1172,6 +1188,16 @@ export default function PetMaker({
           <span className="pmx-sep" />
           <button
             type="button"
+            className={`pmx-btn${tool === 'move' ? ' on' : ''}`}
+            aria-pressed={tool === 'move'}
+            aria-label={t('pet.maker.tool.move')}
+            title={`${t('pet.maker.tool.move')}\n${t('pet.maker.moveHint')}`}
+            onClick={() => setTool('move')}
+          >
+            <Move size={15} />
+          </button>
+          <button
+            type="button"
             className={`pmx-btn${tool === 'erase' ? ' on' : ''}`}
             aria-pressed={tool === 'erase'}
             aria-label={t('pet.maker.role.erase')}
@@ -1200,10 +1226,34 @@ export default function PetMaker({
             onPointerDown={(e) => {
               drawing.current = true
               e.currentTarget.setPointerCapture(e.pointerId)
+              if (tool === 'move') {
+                if (draft) {
+                  const r = e.currentTarget.getBoundingClientRect()
+                  moveRef.current = { x: e.clientX, y: e.clientY, cell: r.width / ART, art: draft.art, face: draft.face, dx: 0, dy: 0 }
+                }
+                return
+              }
               applyTool(e)
             }}
-            onPointerMove={(e) => drawing.current && applyTool(e)}
-            onPointerUp={() => (drawing.current = false)}
+            onPointerMove={(e) => {
+              if (!drawing.current) return
+              const m = moveRef.current
+              if (tool !== 'move') return applyTool(e)
+              if (!m || !draft) return
+              // Measured from where the drag began, so the picture never drifts from the pointer.
+              const dx = Math.round((e.clientX - m.x) / m.cell)
+              const dy = Math.round((e.clientY - m.y) / m.cell)
+              if (dx === m.dx && dy === m.dy) return
+              m.dx = dx
+              m.dy = dy
+              const face = { x: Math.max(0, Math.min(ART - 6, m.face.x + dx)), y: Math.max(0, Math.min(ART - 4, m.face.y + dy)) }
+              setDraft({ ...draft, art: shiftArt(m.art, dx, dy), face })
+              touch()
+            }}
+            onPointerUp={() => {
+              drawing.current = false
+              moveRef.current = null
+            }}
           >
             {draft.art.map((row, y) =>
               [...row].map((ch, x) => (

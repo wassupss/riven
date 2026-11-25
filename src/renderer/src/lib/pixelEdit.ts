@@ -276,3 +276,53 @@ export function redo<T>(h: History<T>, current: T): { history: History<T>; state
   const state = h.future[h.future.length - 1]
   return { history: { past: [...h.past, current], future: h.future.slice(0, -1), key: null }, state }
 }
+
+// ---- moving and clearing a part of the picture ----
+// A rectangle of cells, both corners inclusive. The whole picture is one too.
+
+export interface CellRect {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+export const fullRect = (n: number): CellRect => ({ x0: 0, y0: 0, x1: n - 1, y1: n - 1 })
+
+/** The rectangle spanned by two cells, in either order. */
+export const rectOf = (ax: number, ay: number, bx: number, by: number): CellRect => ({
+  x0: Math.min(ax, bx),
+  y0: Math.min(ay, by),
+  x1: Math.max(ax, bx),
+  y1: Math.max(ay, by)
+})
+
+export const shiftRect = (r: CellRect, dx: number, dy: number): CellRect => ({
+  x0: r.x0 + dx,
+  y0: r.y0 + dy,
+  x1: r.x1 + dx,
+  y1: r.y1 + dy
+})
+
+/** Moves what is inside `r` by (dx, dy), in place. Dots pushed off the edge are lost; the rest keep their colour. */
+export function moveRect(cells: Uint8Array, n: number, r: CellRect, dx: number, dy: number): void {
+  const w = r.x1 - r.x0 + 1
+  const h = r.y1 - r.y0 + 1
+  const block = new Uint8Array(w * h)
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) block[j * w + i] = cells[(r.y0 + j) * n + r.x0 + i]
+  clearRect(cells, n, r)
+  for (let j = 0; j < h; j++) {
+    const ty = r.y0 + j + dy
+    if (ty < 0 || ty >= n) continue
+    for (let i = 0; i < w; i++) {
+      const v = block[j * w + i]
+      const tx = r.x0 + i + dx
+      if (v && tx >= 0 && tx < n) cells[ty * n + tx] = v
+    }
+  }
+}
+
+/** Empties `r` (background removal), in place. */
+export function clearRect(cells: Uint8Array, n: number, r: CellRect): void {
+  for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) cells[y * n + x] = EMPTY
+}
