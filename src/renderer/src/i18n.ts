@@ -667,7 +667,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'settings.notifyDesc': { ko: '백그라운드에서 턴이 끝나면 알림', en: 'Notify when a background turn finishes' },
   'settings.crashDesc': { ko: '익명 크래시 리포트 전송', en: 'Send anonymous crash reports' },
-  'settings.agentChatUIDesc': { ko: 'AI 에이전트를 터미널 CLI 대신 네이티브 챗으로 실행', en: 'Run agents in the native chat instead of a terminal CLI' },
   'settings.cliSection': { ko: '감지된 CLI', en: 'Detected CLIs' },
   'settings.cliDetecting': { ko: 'CLI 감지 중…', en: 'Detecting CLIs…' },
   'settings.cliNone': { ko: 'PATH에서 AI CLI를 찾지 못했습니다 (claude, codex).', en: 'No AI CLI found on PATH (claude, codex).' },
@@ -716,10 +715,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.wordWrap': { ko: '자동 줄바꿈', en: 'Word wrap' },
   'settings.minimap': { ko: '미니맵', en: 'Minimap' },
   'settings.ligatures': { ko: '글꼴 합자(ligature)', en: 'Font ligatures' },
-  'settings.agentChatUI': {
-    ko: 'AI 에이전트를 네이티브 챗으로 실행 (끄면 터미널 CLI)',
-    en: 'Run AI agents in the native chat (off = terminal CLI)'
-  },
   'settings.terminalProfiles': { ko: '터미널 프로파일', en: 'Terminal profiles' },
   'settings.terminalProfilesHint': {
     ko: '패널 메뉴에서 새 터미널로 실행할 명령 프리셋입니다.',

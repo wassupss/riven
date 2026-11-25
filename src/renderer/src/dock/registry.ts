@@ -437,7 +437,7 @@ export function nativeChatCli(command: string): 'claude' | 'codex' | null {
 }
 export function launchAgent(command: string, initialText?: string): void {
   const cli = nativeChatCli(command)
-  if (getSettings().agentChatUI && cli)
+  if (cli)
     addChat(initialText, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, cli)
   else addTerminal(command)
 }
@@ -569,7 +569,7 @@ export function pickCliInLauncher(launcherId: string, cmd: string): void {
   const api = activeApi
   if (!api) return
   const cli = nativeChatCli(cmd)
-  if (getSettings().agentChatUI && cli) {
+  if (cli) {
     addChat(undefined, 'within', undefined, launcherId, undefined, undefined, undefined, undefined, undefined, cli)
   } else {
     addTerminal(cmd, 'within', launcherId)
