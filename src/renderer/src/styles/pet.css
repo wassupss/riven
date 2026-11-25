@@ -1833,10 +1833,75 @@
   justify-content: flex-end;
 }
 .assistant-card-body {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+/* The history: the pet's conversations, set over the top of the card's body. */
+.pet-chat-history {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  z-index: 2;
+  width: 260px;
+  max-height: 60%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.35);
+}
+.pet-chat-hist-new,
+.pet-chat-hist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.pet-chat-hist-new:hover,
+.pet-chat-hist-item:hover {
+  background: var(--hover);
+}
+.pet-chat-hist-new {
+  color: var(--accent);
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 4px;
+  border-radius: 0;
+}
+.pet-chat-hist-item.current {
+  color: var(--accent);
+}
+.pet-chat-hist-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pet-chat-hist-when {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pet-chat-hist-empty {
+  padding: 8px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
 }
 .assistant-card-body .pet-chat-body {
   flex: 1 1 auto;

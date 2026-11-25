@@ -227,15 +227,45 @@ export function balloonText(reply: string, max = 140): string {
 
 // ---- the saved sessions ---------------------------------------------------------
 
-/** Each assistant's conversation, by its pet's birthday: resumed on the next start. */
-export interface SavedSession {
+/** A conversation the keeper set aside: it can be picked up again from the history. */
+export interface PastChat {
   sessionId: string
-  /** The folder it runs in: the CLI resumes a session only there. */
   cwd: string
+  /** Its first message, cut short ('' when it had none). */
+  title: string
+  /** When it was last talked in (ms). */
+  at: number
+}
+
+/**
+ * Each pet's conversations, by its pet's birthday. `sessionId`/`cwd` are the current
+ * one (resumed on the next start); `past` is the history it was set aside from.
+ */
+export interface SavedSession {
+  sessionId?: string
+  /** The folder it runs in: the CLI resumes a session only there. */
+  cwd?: string
+  title?: string
+  at?: number
+  past?: PastChat[]
 }
 export type SavedSessions = Record<string, SavedSession>
 
+/** How many set-aside conversations a pet keeps. */
+export const MAX_PAST_CHATS = 30
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** A set-aside conversation, read defensively (null when malformed). */
+function sanitizePast(v: unknown): PastChat | null {
+  if (!v || typeof v !== 'object') return null
+  const e = v as Record<string, unknown>
+  if (typeof e.sessionId !== 'string' || !UUID_RE.test(e.sessionId)) return null
+  if (typeof e.cwd !== 'string' || !e.cwd.startsWith('/')) return null
+  const at = typeof e.at === 'number' && Number.isFinite(e.at) ? e.at : 0
+  const title = typeof e.title === 'string' ? e.title.slice(0, 200) : ''
+  return { sessionId: e.sessionId, cwd: e.cwd, title, at }
+}
 
 /** pet-assistants.json read defensively: only well formed entries survive. */
 export function sanitizeSessions(raw: unknown): SavedSessions {
@@ -245,9 +275,17 @@ export function sanitizeSessions(raw: unknown): SavedSessions {
   for (const [k, v] of Object.entries(pets)) {
     if (!/^\d+$/.test(k) || !v || typeof v !== 'object') continue
     const e = v as Record<string, unknown>
-    if (typeof e.sessionId !== 'string' || !UUID_RE.test(e.sessionId)) continue
-    if (typeof e.cwd !== 'string' || !e.cwd.startsWith('/')) continue
-    out[k] = { sessionId: e.sessionId, cwd: e.cwd }
+    const past = Array.isArray(e.past)
+      ? e.past.map(sanitizePast).filter((p): p is PastChat => p !== null).slice(0, MAX_PAST_CHATS)
+      : []
+    const current =
+      typeof e.sessionId === 'string' && UUID_RE.test(e.sessionId) && typeof e.cwd === 'string' && e.cwd.startsWith('/')
+        ? { sessionId: e.sessionId, cwd: e.cwd }
+        : null
+    if (!current && past.length === 0) continue
+    const title = typeof e.title === 'string' ? e.title.slice(0, 200) : undefined
+    const at = typeof e.at === 'number' && Number.isFinite(e.at) ? e.at : undefined
+    out[k] = { ...(current ?? {}), ...(title !== undefined ? { title } : {}), ...(at !== undefined ? { at } : {}), ...(past.length ? { past } : {}) }
   }
   return out
 }

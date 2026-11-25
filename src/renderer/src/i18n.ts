@@ -2421,6 +2421,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.assist.stop': { ko: '중단', en: 'Stop' },
   'pet.assist.resting': { ko: '쉬는 중 (다음 부탁에 깨어나요)', en: 'resting (wakes on the next ask)' },
   'pet.assist.open': { ko: '대화 열기', en: 'Open conversation' },
+  'pet.assist.history': { ko: '대화 기록', en: 'Conversation history' },
+  'pet.assist.newChat': { ko: '새 대화', en: 'New conversation' },
+  'pet.assist.current': { ko: '지금 대화', en: 'Current' },
+  'pet.assist.untitled': { ko: '제목 없는 대화', en: 'Untitled conversation' },
+  'pet.assist.historyEmpty': { ko: '아직 지난 대화가 없어요', en: 'No earlier conversations yet' },
   'pet.assist.parkedNote': {
     ko: '지금은 쉬는 중이에요. 메시지를 보내면 이 대화를 이어서 시작해요.',
     en: 'Resting now. Send a message to carry on this conversation.'

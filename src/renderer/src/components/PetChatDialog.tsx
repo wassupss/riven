@@ -1,11 +1,22 @@
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { ArrowUp, Square, SquareTerminal, X } from 'lucide-react'
+import { ArrowUp, History, Plus, Square, SquareTerminal, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { buildTurns, initialModel, reduce, type AgentProgress, type CliEvent } from '../lib/cliChat'
 import { TurnView } from '../dock/panels/clichat/TurnView'
 import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from '../dock/panels/clichat/Cards'
 import TerminalPane from './TerminalPane'
-import { assistantPet, closePetChat, openPetChat, sendFromChat, usePetChat, viewPetChat } from '../state/petAssistants'
+import {
+  assistantPet,
+  closePetChat,
+  listPetChats,
+  newPetChat,
+  openPetChat,
+  resumePetChat,
+  sendFromChat,
+  usePetChat,
+  viewPetChat,
+  type PetChatItem
+} from '../state/petAssistants'
 import { onAssistantChatRequest, type AssistPet } from '../lib/petAssistBus'
 import '../styles/cli-chat.css'
 import '../styles/pet.css'
@@ -25,6 +36,12 @@ import '../styles/pet.css'
 const NO_AGENTS: Record<string, AgentProgress> = {}
 // Only the recent turns are drawn; a pet conversation is read, not mined.
 const TURNS_SHOWN = 40
+
+/** When a past conversation was last talked in, short. */
+function whenOf(at: number): string {
+  if (!at) return ''
+  return new Date(at).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
 
 /** The card's width: its room on the pet's left, in riven's window and in the pet's own. */
 export const ASSIST_CARD_W = 540
@@ -93,6 +110,8 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
   const [input, setInput] = useState('')
   const [refused, setRefused] = useState(false)
   const composing = useRef(false)
+  const [histOpen, setHistOpen] = useState(false)
+  const [chats, setChats] = useState<PetChatItem[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { state } = model
@@ -129,6 +148,11 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // The conversations this pet has: read when the history opens, and as a turn ends.
+  useEffect(() => {
+    if (histOpen) void listPetChats(bornAt).then(setChats)
+  }, [histOpen, bornAt, state.busy])
+
   const turns = useMemo(() => buildTurns(model.items), [model.items])
   const shown = turns.length > TURNS_SHOWN ? turns.slice(-TURNS_SHOWN) : turns
   useEffect(() => {
@@ -159,6 +183,16 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
             <span className="pet-chat-name">{pet ? t('pet.assist.chatTitle', { name: pet.title }) : ''}</span>
           </span>
           <span className="pet-chat-tools">
+            <button
+              type="button"
+              className={`pet-chat-icon${histOpen ? ' on' : ''}`}
+              title={t('pet.assist.history')}
+              aria-label={t('pet.assist.history')}
+              aria-expanded={histOpen}
+              onClick={() => setHistOpen((v) => !v)}
+            >
+              <History size={14} />
+            </button>
             {key && !state.dead && !state.parked && (
               <button
                 type="button"
@@ -184,6 +218,37 @@ function Dialog({ bornAt }: { bornAt: number }): JSX.Element {
             )}
           </span>
         </div>
+        {histOpen && (
+          <div className="pet-chat-history" role="menu">
+            <button
+              type="button"
+              className="pet-chat-hist-new"
+              onClick={() => {
+                setHistOpen(false)
+                newPetChat(bornAt)
+              }}
+            >
+              <Plus size={13} />
+              <span>{t('pet.assist.newChat')}</span>
+            </button>
+            {chats.length === 0 && <div className="pet-chat-hist-empty">{t('pet.assist.historyEmpty')}</div>}
+            {chats.map((c) => (
+              <button
+                key={c.sessionId}
+                type="button"
+                role="menuitem"
+                className={`pet-chat-hist-item${c.current ? ' current' : ''}`}
+                onClick={() => {
+                  setHistOpen(false)
+                  if (!c.current) resumePetChat(bornAt, c.sessionId)
+                }}
+              >
+                <span className="pet-chat-hist-title">{c.title || t('pet.assist.untitled')}</span>
+                <span className="pet-chat-hist-when">{c.current ? t('pet.assist.current') : whenOf(c.at)}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="chat-panel cli-chat pet-chat-body">
           {state.terminal && key && !state.dead ? (
             <div className="cli-chat-term">

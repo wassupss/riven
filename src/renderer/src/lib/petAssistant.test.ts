@@ -161,3 +161,28 @@ describe('sanitizeSessions', () => {
     expect(sanitizeSessions({ pets: [1] })).toEqual({})
   })
 })
+
+describe('sanitizeSessions history', () => {
+  const a = '0f8b5c1e-1d2a-4c3b-9e8f-1234567890ab'
+  const b = '1f8b5c1e-1d2a-4c3b-9e8f-1234567890ab'
+  it('keeps the set-aside conversations, and an entry with only history', () => {
+    const out = sanitizeSessions({
+      pets: {
+        '1700': {
+          sessionId: a,
+          cwd: '/x',
+          title: 'hello',
+          at: 5,
+          past: [{ sessionId: b, cwd: '/x', title: 'old', at: 3 }, { sessionId: 'nope', cwd: '/x' }]
+        },
+        '1800': { past: [{ sessionId: b, cwd: '/y', title: '', at: 1 }] },
+        '1900': { title: 'no session, no history' }
+      }
+    })
+    expect(out).toEqual({
+      '1700': { sessionId: a, cwd: '/x', title: 'hello', at: 5, past: [{ sessionId: b, cwd: '/x', title: 'old', at: 3 }] },
+      '1800': { past: [{ sessionId: b, cwd: '/y', title: '', at: 1 }] }
+    })
+  })
+})
+
