@@ -6,10 +6,15 @@
 
 /* ---- the modal: start screen, or editor (middle) + side column, bottom bar ---- */
 .modal.pmk {
-  width: min(1080px, 94vw);
-  height: min(760px, 90vh);
+  width: min(1280px, 96vw);
+  height: min(880px, 92vh);
   max-width: none;
   max-height: none;
+}
+/* 넓게 보기: 캔버스가 화면 거의 전체를 쓴다 (pmk-stage 크기에 맞춰 픽셀 캔버스가 다시 맞춰짐) */
+.modal.pmk.expanded {
+  width: 98vw;
+  height: 96vh;
 }
 .modal.pmk.start {
   width: min(620px, 92vw);

@@ -21,6 +21,8 @@ import {
   Eraser,
   ImagePlus,
   LayoutGrid,
+  Maximize2,
+  Minimize2,
   PawPrint,
   Plus,
   RotateCcw,
@@ -398,6 +400,7 @@ export default function PetMaker({
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [photoError, setPhotoError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const [dragOver, setDragOver] = useState(false)
 
   const fileRef = useRef<HTMLInputElement>(null)
@@ -1311,7 +1314,7 @@ export default function PetMaker({
   return createPortal(
     <div className="modal-overlay pmk-overlay">
       <div
-        className={`modal pmk${screen === 'start' ? ' start' : ''}`}
+        className={`modal pmk${screen === 'start' ? ' start' : ''}${expanded && screen !== 'start' ? ' expanded' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={target ? t('pet.maker.editTitle', { name: target.name }) : t('pet.maker.create')}
@@ -1319,6 +1322,18 @@ export default function PetMaker({
       >
         <div className="modal-header">
           <span>{target ? t('pet.maker.editTitle', { name: target.name }) : t('pet.maker.create')}</span>
+          {screen !== 'start' && (
+            <button
+              type="button"
+              className="pmx-btn"
+              title={expanded ? '작게 보기' : '넓게 보기'}
+              aria-label={expanded ? '작게 보기' : '넓게 보기'}
+              aria-pressed={expanded}
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          )}
           <button type="button" className="pmx-btn" title={t('common.close')} aria-label={t('common.close')} onClick={requestClose}>
             <X size={15} />
           </button>
