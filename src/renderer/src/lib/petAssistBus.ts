@@ -15,6 +15,9 @@ import type { AssistantConfig } from './petAssistant'
 
 const NAME = 'riven-pet-assist'
 
+/** Fired on window when the in-app pet is moved (dragged or clamped): its card follows. */
+export const PET_MOVED = 'riven-pet-moved'
+
 /** What the host needs to know about a pet to run it as an assistant. */
 export interface AssistPet {
   bornAt: number

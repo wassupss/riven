@@ -18,7 +18,7 @@ import {
   viewPetChat,
   type PetChatItem
 } from '../state/petAssistants'
-import { onAssistantChatRequest, type AssistPet } from '../lib/petAssistBus'
+import { onAssistantChatRequest, PET_MOVED, type AssistPet } from '../lib/petAssistBus'
 import '../styles/cli-chat.css'
 import '../styles/pet.css'
 
@@ -90,11 +90,13 @@ export function AssistantCard({ anchor }: { anchor: 'attached' | 'detached' }): 
     }
     place()
     window.addEventListener('resize', place)
+    window.addEventListener(PET_MOVED, place)
     const pet = document.querySelector('.pet-device') as HTMLElement | null
     const ro = pet && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(place) : null
     if (pet) ro?.observe(pet)
     return () => {
       window.removeEventListener('resize', place)
+      window.removeEventListener(PET_MOVED, place)
       ro?.disconnect()
     }
   }, [open, anchor])
