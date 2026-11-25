@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useSettings, getSettings } from './state/settings'
 
 // ---------------------------------------------------------------------------
@@ -2800,9 +2801,11 @@ function translate(lang: Lang, key: string, arg1?: string | Params, arg2?: Param
 export type TFn = (key: string, arg1?: string | Params, arg2?: Params) => string
 
 // Reactive hook — re-renders the caller when the language setting changes.
+// Stable while the language is: effects that list `t` as a dependency must not re-run on
+// every render (the pet's break timer set state each run, so a fresh `t` looped forever).
 export function useT(): TFn {
   const lang = useSettings((s) => s.settings.language)
-  return (key, arg1, arg2) => translate(lang, key, arg1, arg2)
+  return useMemo(() => (key, arg1, arg2) => translate(lang, key, arg1, arg2), [lang])
 }
 
 // Non-reactive translate for imperative code (confirm/alert/notifications).
