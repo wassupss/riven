@@ -39,7 +39,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'toolbar.addPanel': { ko: '패널 추가', en: 'Add panel' },
   'toolbar.openPanel': { ko: '패널 열기', en: 'Open panel' },
   'toolbar.panel.editor': { ko: '코드 편집기', en: 'Code editor' },
-  'toolbar.panel.changes': { ko: '변경 사항', en: 'Changes' },
   'toolbar.panel.preview': { ko: '프리뷰', en: 'Preview' },
   'toolbar.panel.search': { ko: '검색', en: 'Search' },
   'toolbar.openAgent': { ko: '에이전트 열기', en: 'Open agent' },
@@ -706,13 +705,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.configFile': { ko: '설정 파일', en: 'Config file' },
   'settings.configFileDesc': { ko: 'settings.json 을 파인더에서 열기', en: 'Reveal settings.json in Finder' },
   'settings.resetAllDesc': { ko: '모든 설정을 기본값으로 되돌립니다', en: 'Restore every setting to its default' },
-  'settings.autocompact': { ko: '컨텍스트 압축 시점', en: 'Compact context at' },
-  'settings.autocompactDesc': {
-    ko: '대화가 이만큼 쌓이면 요약해 줄입니다. 요청마다 전체 컨텍스트를 다시 읽기 때문에, 낮을수록 긴 대화의 토큰이 크게 줄어듭니다. 에이전트가 다음에 시작될 때부터 적용됩니다.',
-    en: 'Summarise the conversation once it grows this large. Every request re-reads the whole context, so lower means far fewer tokens in long chats. Takes effect the next time an agent starts.'
-  },
-  'settings.autocompactRecommended': { ko: '{n} (권장)', en: '{n} (recommended)' },
-  'settings.autocompactAuto': { ko: '자동 (모델 한도 근처, 최대 1M)', en: 'Auto (near the model limit, up to 1M)' },
   'settings.defaultModelDesc': { ko: '새 대화가 시작할 기본 모델', en: 'Model new chats start with' },
   'settings.defaultPermModeDesc': { ko: '새 대화의 기본 권한 모드', en: 'Default permission mode for new chats' },
   'settings.promptSection': { ko: '전역 프롬프트', en: 'Global prompt' },
@@ -727,11 +719,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.agentChatUI': {
     ko: 'AI 에이전트를 네이티브 챗으로 실행 (끄면 터미널 CLI)',
     en: 'Run AI agents in the native chat (off = terminal CLI)'
-  },
-  'settings.chatEngineCli': { ko: '새 챗을 CLI 챗으로 열기', en: 'Open new chats as CLI chats' },
-  'settings.chatEngineCliDesc': {
-    ko: '실제 claude / codex CLI를 챗 화면으로 실행합니다. 끄면 기존 네이티브 챗(헤드리스). 이미 열린 챗은 그대로 유지됩니다.',
-    en: 'Runs the real claude / codex CLI behind the chat view. Off = the previous native (headless) chat. Open chats keep theirs.'
   },
   'settings.terminalProfiles': { ko: '터미널 프로파일', en: 'Terminal profiles' },
   'settings.terminalProfilesHint': {
@@ -842,7 +829,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'problems.rerun': { ko: '재검사', en: 'Re-run' },
   'output.clear': { ko: '지우기', en: 'Clear' },
   'output.empty': { ko: '출력이 없습니다.', en: 'No output yet.' },
-  'title.changes': { ko: '변경 사항', en: 'Changes' },
   'changes.empty': {
     ko: '에이전트가 이 세션에서 편집한 파일이 여기 요약됩니다.',
     en: 'Files an agent edits in this session are summarized here.'
@@ -852,10 +838,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'changes.revertAll': { ko: '전체 되돌리기', en: 'Revert all' },
   'changes.accept': { ko: '수락', en: 'Accept' },
   'changes.revert': { ko: '되돌리기', en: 'Revert' },
-  'changes.pillTitle': {
-    ko: '에이전트 변경 사항 타임라인 열기',
-    en: 'Open the agent changes timeline'
-  },
   'title.terminal': { ko: '터미널', en: 'Terminal' },
   'title.chat': { ko: '채팅', en: 'Chat' },
   // CLI chat (experimental): the interactive CLI behind a chat view.
@@ -890,6 +872,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'clichat.perm.allow': { ko: '허용', en: 'Allow' },
   'clichat.perm.deny': { ko: '거부', en: 'Deny' },
   'clichat.perm.terminal': { ko: '터미널에서 답하기', en: 'Answer in terminal' },
+  'clichat.toolLines': { ko: '{n}줄', en: '{n} lines' },
   'clichat.thinking': { ko: '생각', en: 'Thinking' },
   'clichat.thinkingHidden': { ko: '(내용 비공개)', en: '(content withheld)' },
   'clichat.compact': { ko: '대화 압축됨 ({trigger}, {tokens} 토큰)', en: 'Conversation compacted ({trigger}, {tokens} tokens)' },
@@ -1085,6 +1068,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.tools.web': { ko: '웹 검색 중', en: 'Searching the web' },
   'chat.tools.todo': { ko: '정리 중', en: 'Planning' },
   'chat.subagent': { ko: '서브에이전트', en: 'Subagent' },
+  'title.assistant': { ko: '비서', en: 'Assistant' },
   'title.notes': { ko: '메모', en: 'Notes' },
   'title.api': { ko: 'API', en: 'API' },
   'title.db': { ko: 'DB', en: 'Database' },

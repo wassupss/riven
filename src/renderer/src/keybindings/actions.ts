@@ -3,7 +3,10 @@ import { focusEditor, focusPane, clearFocusedTerminal, saveActiveEditor } from '
 import { useSession, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
-import { PET_KEY_DEFS } from './petKeys'
+import { usePet } from '../state/pet'
+import { isAssistant } from '../lib/petAssistant'
+import { openPetChat } from '../state/petAssistants'
+import { assistantOpen, closeAssistant } from '../dock/registry'
 import { contextBus } from '../bridge/contextBus'
 import {
   addTerminal,
@@ -13,11 +16,9 @@ import {
   focusGroupInDirection,
   cycleGroupTab,
   selectPanelInGroup,
-  ensureChanges,
   getActiveApi,
   addChat,
   addCliChat,
-  addNativeChat,
   openEditorSplit,
   openLauncher,
   activateTerminalById
@@ -37,18 +38,6 @@ const TERMINAL = '터미널'
 // Registers the default set of app actions (code-editor shortcuts live in
 // editorKeymaps.ts). Bindings are customizable at runtime.
 export function registerDefaultActions(): void {
-  // The pet's three keys. The chords live in petKeys.ts because the floating pet
-  // is a window of its own and has to match the same ones (rebinds included).
-  for (const { key, def, label } of PET_KEY_DEFS)
-    keymap.register({
-      id: `pet.key.${key}`,
-      label,
-      category: RIVEN,
-      context: 'riven',
-      def,
-      run: () => void window.api.pet.press(key)
-    })
-
   // Putting it away and getting it back. No default: the status-bar egg does it
   // with the mouse, and the settings list is where you pick keys if you want them.
   keymap.register({
@@ -60,6 +49,23 @@ export function registerDefaultActions(): void {
     run: () => {
       const { settings, set } = useSettings.getState()
       set({ petShow: !settings.petShow })
+    }
+  })
+
+  // The focused pet's assistant conversation, as a panel (beside the pet when it is out
+  // on the desktop). Only an assistant pet has one: any other pet ignores the key.
+  keymap.register({
+    id: 'pet.assistant',
+    label: '비서 대화창 열기',
+    category: RIVEN,
+    context: 'riven',
+    def: "Mod+'",
+    run: () => {
+      const pet = usePet.getState().pet
+      if (!pet || !isAssistant(pet.assistant)) return
+      // Again while it is open: closes it.
+      if (assistantOpen(pet.bornAt)) closeAssistant(pet.bornAt)
+      else openPetChat(pet.bornAt)
     }
   })
 
@@ -194,21 +200,6 @@ export function registerDefaultActions(): void {
     run: () => togglePanel('git')
   })
   keymap.register({
-    id: 'panel.changes',
-    label: '변경사항 패널',
-    category: RIVEN,
-    context: 'riven',
-    def: 'Mod+Shift+c',
-    run: () => {
-      // Toggle: the Changes timeline opens pinned-narrow (ensureChanges), and the
-      // same chord closes it when already open.
-      const api = getActiveApi()
-      const existing = api?.getPanel('changes')
-      if (api && existing) api.removePanel(existing)
-      else ensureChanges()
-    }
-  })
-  keymap.register({
     id: 'panel.chat',
     label: '새 채팅 (에이전트)',
     category: RIVEN,
@@ -225,14 +216,6 @@ export function registerDefaultActions(): void {
     context: 'riven',
     def: '',
     run: () => addCliChat()
-  })
-  keymap.register({
-    id: 'panel.nativeChat',
-    label: '새 네이티브 챗 (헤드리스)',
-    category: RIVEN,
-    context: 'riven',
-    def: '',
-    run: () => addNativeChat()
   })
   keymap.register({
     id: 'panel.popout',

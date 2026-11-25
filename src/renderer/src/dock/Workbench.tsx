@@ -10,11 +10,10 @@ import SchedulerPanel from './panels/SchedulerPanel'
 import ExplorerPanel from './panels/ExplorerPanel'
 import SearchPanel from './panels/SearchPanel'
 import GitPanel from './panels/GitPanel'
-import ChangesPanel from './panels/ChangesPanel'
 import NotesPanel from './panels/NotesPanel'
+import AssistantPanel from './panels/AssistantPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
 import DbPanel from './panels/DbPanel'
-import ChatPanel from './panels/ChatPanel'
 import { dropCliChat } from '../state/cliChats'
 import CliChatPanel, { type CliChatParams } from './panels/CliChatPanel'
 import LauncherPanel from './panels/LauncherPanel'
@@ -182,7 +181,8 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
         boxed('preview', props, <PreviewPanel workspace={workspace} api={props.api} />),
       search: (props: IDockviewPanelProps) => boxed('search', props, <SearchPanel workspace={workspace} />),
       git: (props: IDockviewPanelProps) => boxed('git', props, <GitPanel workspace={workspace} />),
-      changes: (props: IDockviewPanelProps) => boxed('changes', props, <ChangesPanel workspace={workspace} />),
+      assistant: (props: IDockviewPanelProps) =>
+        boxed('assistant', props, <AssistantPanel bornAt={Number(props.params.bornAt)} />),
       notes: (props: IDockviewPanelProps) => boxed('notes', props, <NotesPanel workspace={workspace} />),
       api: (props: IDockviewPanelProps) => boxed('api', props, <ApiClientPanel />),
       db: (props: IDockviewPanelProps) => boxed('db', props, <DbPanel />),
@@ -199,20 +199,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
         boxed(
           'chat',
           props,
-          // The pane's own engine (pane state, set when it was made): a saved
-          // layout's headless chats stay headless, CLI chats stay CLI chats.
-          useSession.getState().sessions[workspace]?.panes?.[props.params.chatKey]?.engine === 'cli' ? (
-            <CliChatPanel workspace={workspace} params={props.params} api={props.api} />
-          ) : (
-            <ChatPanel
-              workspace={workspace}
-              chatKey={props.params.chatKey}
-              pinnedTitle={props.params.pinnedTitle}
-              agent={props.params.agent}
-              setTitle={(title) => props.api.setTitle(title)}
-              api={props.api}
-            />
-          )
+          <CliChatPanel workspace={workspace} params={props.params} api={props.api} />
         ),
       // Panes opened by the experimental command before CLI chats were chat
       // panes (clichat-<id>): still restored.
@@ -270,7 +257,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       restoredRef.current = false
 
       // KNOWN is derived from the live component registry so it can never drift
-      // out of sync (the old hardcoded list omitted 'git'/'changes', wiping any
+      // out of sync (the old hardcoded list omitted 'git', wiping any
       // layout that contained them). Unknown panels are pruned per-node instead
       // of discarding the whole layout.
       const KNOWN = new Set(Object.keys(components))
@@ -344,10 +331,6 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             dropCliChat(panel.id)
             clearPaneState(workspace, panel.id)
           } else if (panel.id.startsWith('chat-')) {
-            // A chat pane runs on the headless driver or the CLI chat
-            // (pane state `engine`); stopping the one it does not use is a
-            // no-op.
-            window.api.chat.stop(panel.id)
             window.api.cliChat.stop(panel.id)
             dropCliChat(panel.id)
             // A team member's pane is the member's desk, not a throwaway chat:
@@ -583,7 +566,6 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       for (const p of api.panels) {
         if (p.id.startsWith('term-')) window.api.pty.kill(p.id)
         else if (p.id.startsWith('chat-')) {
-          window.api.chat.stop(p.id)
           window.api.cliChat.stop(p.id)
         } else if (p.id.startsWith('clichat-')) window.api.cliChat.stop(p.id)
       }

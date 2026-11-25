@@ -28,12 +28,12 @@ export const PANEL_BG_KINDS = [
   'db',
   'api',
   'git',
-  'changes',
   'search',
   'explorer',
   'agentgroup',
   'scheduler',
-  'prdiff'
+  'prdiff',
+  'assistant'
 ] as const
 export type PanelBgKind = (typeof PANEL_BG_KINDS)[number]
 
@@ -51,12 +51,12 @@ export const PANEL_BG_KIND_LABEL: Record<PanelBgKind, string> = {
   db: 'title.db',
   api: 'title.api',
   git: 'title.git',
-  changes: 'title.changes',
   search: 'title.search',
   explorer: 'title.explorer',
   agentgroup: 'title.agentgroup',
   scheduler: 'title.scheduler',
-  prdiff: 'title.prdiff'
+  prdiff: 'title.prdiff',
+  assistant: 'title.assistant'
 }
 
 /**

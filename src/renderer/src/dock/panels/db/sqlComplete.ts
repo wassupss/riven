@@ -5,8 +5,8 @@ import {
   suggest,
   type CompletionMeta,
   type SuggestionKind,
-} from "../../../../../main/db/complete";
-import type { DbKind } from "../../../../../main/db/types";
+} from "../../../../../shared/db/complete";
+import type { DbKind } from "../../../../../shared/db/types";
 
 // Schema-aware SQL autocomplete for the console. One provider serves every SQL
 // model; each console model registers which connection and database it talks

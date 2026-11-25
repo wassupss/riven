@@ -29,12 +29,6 @@ void hydrateFileStore().then(async () => {
   )
 })
 
-// Dev load/stress harness — only when a dedicated profiling instance passes
-// ?stress=1 (never in normal use). Dynamic import so it stays out of the app path.
-if (new URLSearchParams(location.search).has('stress')) {
-  void import('./dev/stress').then((m) => m.maybeRunStress())
-}
-
 // DEV-only: expose stores/registry on window so an external CDP profiler can drive
 // real code paths (workspace switch etc.). Never present in production builds.
 if (import.meta.env.DEV) {

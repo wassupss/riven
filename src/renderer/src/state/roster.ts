@@ -191,16 +191,6 @@ export function startRoster(): () => void {
   })
   const offTitle = window.api.pty.onTitle(({ key, title }) => patch(key, { title }))
 
-  // Chat panes: main streams a turn's events regardless of whether the pane is
-  // on screen, so both busy AND the completion stay truthful for a workspace
-  // that has been unmounted — which is precisely when the panel can't record it.
-  const offChat = window.api.chat.onEvent((e) => {
-    if (e.kind === 'turnDone') patch(e.key, { busy: false, done: !e.error })
-    else if (e.kind === 'exit') patch(e.key, { busy: false })
-    else if (e.kind === 'text' || e.kind === 'tool' || e.kind === 'usage')
-      patch(e.key, { busy: true, done: false })
-  })
-
   // The layout-derived half changes when a pane is added/closed or a workspace
   // opens/closes; that all lands in the session store. Closed panes leave the
   // layout, so that is also when their live signals become garbage — there is no
@@ -225,7 +215,6 @@ export function startRoster(): () => void {
     offAgent()
     offStatus()
     offTitle()
-    offChat()
     offSession()
     offBusyReport()
   }

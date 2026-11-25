@@ -2,12 +2,10 @@ import { useEffect, useState } from 'react'
 import { useSession, workspaceName, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
-import { useAgentEdits, timelineFor, unseenFor } from '../state/agentEdits'
 import { useUpdate } from '../state/update'
-import { togglePanel } from '../dock/registry'
 import { useT } from '../i18n'
 import UsageWidget from './UsageWidget'
-import { Folder, FolderOpen, GitBranch, FileDiff, ArrowDownToLine, Egg } from 'lucide-react'
+import { Folder, FolderOpen, GitBranch, ArrowDownToLine, Egg } from 'lucide-react'
 
 interface Info {
   repoName: string
@@ -22,8 +20,6 @@ export default function StatusBar(): JSX.Element {
   const wsName = useSession((s) => (folder ? workspaceName(folder, s.names) : null))
   // Scoped to the workspace on screen. This counted EVERY workspace's edits, so
   // the pill in one project reported files an agent had touched in another.
-  const changeCount = useAgentEdits((s) => timelineFor(s.timeline, folder).length)
-  const unseen = useAgentEdits((s) => unseenFor(s.timeline, s.seenAt, folder))
   const updateReady = useUpdate((s) => s.status.state === 'downloaded')
   // 리븐펫 floats over the app rather than living in a tab, so this is the one
   // affordance that is always on screen to get it back after hiding it.
@@ -74,16 +70,6 @@ export default function StatusBar(): JSX.Element {
           header: glancing at it mid-task is the whole point. */}
       <UsageWidget />
       <span className="status-spacer" />
-      {changeCount > 0 && (
-        <span
-          className="status-item click changes-pill"
-          title={t('changes.pillTitle')}
-          onClick={() => togglePanel('changes')}
-        >
-          <FileDiff size={13} /> {changeCount}
-          {unseen > 0 && <span className="changes-pill-dot" />}
-        </span>
-      )}
       <span
         className={`status-item click pet-toggle${petShow ? ' on' : ''}`}
         title={petShow ? t('pet.hideCmd') : t('pet.show')}

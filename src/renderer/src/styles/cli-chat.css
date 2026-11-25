@@ -124,11 +124,61 @@ details[open] > summary > .cli-chat-chev {
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* A tool call is one row: a status edge on the left, a dot for its state, the
+   name, its argument, and how big its result was. */
+.cli-chat-tool {
+  margin: 4px 0;
+  padding: 4px 8px 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border-left: 2px solid var(--edge);
+}
+.cli-chat-tool.running {
+  border-left-color: var(--accent);
+}
+.cli-chat-tool.error {
+  border-left-color: var(--danger);
+}
+.cli-chat-tool-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+}
+.cli-chat-tool-dot.running {
+  background: var(--accent);
+  animation: cli-pulse 1.2s ease-in-out infinite;
+}
+.cli-chat-tool-dot.error {
+  background: var(--danger);
+}
+@keyframes cli-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.cli-chat-tool-lines {
+  margin-left: auto;
+  flex: 0 0 auto;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.cli-chat-tool-name {
+  font-family: var(--font-mono, monospace);
+}
 .cli-chat-tool.running .cli-chat-tool-name {
   color: var(--accent);
 }
 .cli-chat-tool.error .cli-chat-tool-name {
   color: var(--danger);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cli-chat-preview .md > p:last-child::after,
+  .cli-chat-preview .md:empty::after,
+  .cli-chat-tool-dot.running {
+    animation: none;
+  }
 }
 .cli-chat-tool-result,
 .cli-chat-perm-input {
@@ -174,9 +224,25 @@ details[open] > summary > .cli-chat-chev {
   opacity: 0.8;
 }
 .cli-chat-preview {
-  white-space: pre-wrap;
   word-break: break-word;
-  opacity: 0.75;
+}
+/* The reply still streaming: a caret at the end of its last paragraph, so it
+   follows the text (a caret after the block would drop to a line of its own). */
+.cli-chat-preview .md > p:last-child::after,
+.cli-chat-preview .md:empty::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--fg);
+  vertical-align: text-bottom;
+  animation: cli-caret 1s steps(2, start) infinite;
+}
+@keyframes cli-caret {
+  to {
+    visibility: hidden;
+  }
 }
 .cli-chat-working {
   display: flex;

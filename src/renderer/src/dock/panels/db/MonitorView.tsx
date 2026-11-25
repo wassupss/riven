@@ -23,8 +23,8 @@ import {
   type SettingInfo,
   type SettingScope,
   type TableStat
-} from '../../../../../main/db/monitor'
-import { dropSql } from '../../../../../main/db/ddl'
+} from '../../../../../shared/db/monitor'
+import { dropSql } from '../../../../../shared/db/ddl'
 import { useT } from '../../../i18n'
 import { useDb, type MonitorTab } from '../../../state/db'
 import { Button, Segmented, Select, Switch, TextInput } from '../../../components/ui/Controls'

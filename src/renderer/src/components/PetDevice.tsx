@@ -42,8 +42,7 @@ import { answer as talkAnswer } from '../state/petTalk'
 import { getActiveApi } from '../dock/registry'
 import { useSettings } from '../state/settings'
 import { promptInput } from './promptInput'
-import { chordFromEvent } from '../keybindings/keys'
-import { petKeyChords } from '../keybindings/petKeys'
+import Markdown from './Markdown'
 import { MIMES, frameDrawings, outfitPixels, photoDrawing, pixelsOf, runPaths, runsOf, SPRITE_SIZE, type Run } from './petSprites'
 import { motionAnimation, motionCss, motionName, situationOf, type MotionSet, type Situation } from '../lib/petMotion'
 import { holdMotion, releaseMotion } from '../lib/petMotionStyle'
@@ -534,6 +533,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** The menu's height there: the device grows to it so the window does too. */
   const [menuH, setMenuH] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
+  /** The ask field of the talk screen (D focuses it). */
+  const askRef = useRef<HTMLInputElement>(null)
   /** The card a screen of the pet's opens in, beside it like the menu. */
   const cardRef = useRef<HTMLDivElement>(null)
   /** Where that card hangs in the app: left of the pet when the right has no
@@ -737,30 +738,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // The handlers are declared far below, past an early return, so the listener
   // reaches them through a ref: a hook may NOT sit on the far side of a `return`
   // (React counts hooks per render, the in-app device crashed on being hidden).
-  const keysRef = useRef<Record<'a' | 'b' | 'c', () => void>>({
-    a: NOOP,
-    b: NOOP,
-    c: NOOP
-  })
-  useEffect(() => {
-    const off = window.api.pet.onPress((k) => keysRef.current[k]?.())
-    // riven's window owns the keymap; this window has none, so when the floating
-    // pet itself has focus it matches the same chords directly, from the same
-    // overrides file, or a rebind would work in one window and not the other.
-    let chords: Record<string, 'a' | 'b' | 'c'> = {}
-    if (detached) void petKeyChords().then((c) => (chords = c))
-    const local = (e: KeyboardEvent): void => {
-      const hit = chords[chordFromEvent(e)]
-      if (!hit) return
-      e.preventDefault()
-      keysRef.current[hit]()
-    }
-    if (detached) window.addEventListener('keydown', local, { capture: true })
-    return () => {
-      off()
-      if (detached) window.removeEventListener('keydown', local, { capture: true })
-    }
-  }, [detached])
 
   // Keep the on-top switch honest about whether the window is actually floating.
   useEffect(() => {
@@ -918,10 +895,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (watching && !error) return
       speak(t(error ? 'pet.notice.failed' : 'pet.notice.done', { where }), NOTICE_MS)
     }
-    const offChat = window.api.chat.onEvent((e) => {
-      if (e.kind === 'tool') onTool(e.key, e.name)
-      else if (e.kind === 'turnDone') onTurnDone(e.key, !!e.error)
-    })
     // The CLI chat: its tool calls arrive as transcript items, its turn end
     // from the hub (a stopped turn is not news).
     const offCli = window.api.cliChat.onEvent((e) => {
@@ -934,7 +907,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (!done.interrupted) onTurnDone(key, !!done.error)
     })
     return () => {
-      offChat()
       offCli()
       offCliDone()
     }
@@ -1065,7 +1037,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (e.key === 'Escape') setMenu(false)
     }
     const down = (e: PointerEvent): void => {
-      if (!ref.current?.contains(e.target as Node)) setMenu(false)
+      // The menu and the pet itself are inside; anywhere else (the pets beside it, the
+      // empty part of the window, the desktop) closes the menu.
+      const t = e.target as Element
+      if (menuRef.current?.contains(t) || t.closest?.('.pet-bare')) return
+      setMenu(false)
     }
     const blur = (): void => setMenu(false)
     window.addEventListener('keydown', key)
@@ -1249,12 +1225,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     [pets, active, shown]
   )
 
-  if (!show && !detached) {
-    // Put away: a shortcut must not act on a pet that is not on screen, so the
-    // relayed presses land on nothing.
-    keysRef.current = { a: NOOP, b: NOOP, c: NOOP }
-    return null
-  }
+  if (!show && !detached) return null
 
   // Unnamed: the screen shows what it is rather than the words "no name".
   const name = pet.name || null
@@ -1472,6 +1443,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** How many of the icons make the row of buttons at the top of the menu. */
   const CARE = 3
 
+  /** The pet's menu, beside the row of pets so it never covers one of them. */
+  const openMenu = (): void => {
+    const el = ref.current
+    if (!el) return
+    setMenuAt((el.querySelector('.pet-stage') ?? el).getBoundingClientRect())
+    const hi = menuLine()
+    menuHi.current = hi
+    speak(hi, MENU_HI_MS)
+    setMenu(true)
+  }
+
   /** Open a screen. The ask field belongs to the talk screen and follows it. */
   const openScreen = (m: ScreenMode): void => {
     setTalking(m === 'talk')
@@ -1489,45 +1471,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setMode('char')
   }
 
-  // ---- the three keys ----
-  // The keyboard's way in (see the shortcuts, above): A walks the functions,
-  // B runs the one it is on (or shows the clock), C backs out.
-  const METER_PAGES: ScreenMode[] = ['stats', 'awards']
-  const pressA = (): void => {
-    if (mode === 'battle') return void copyCode()
-    if (METER_PAGES.includes(mode)) {
-      const next = METER_PAGES[(METER_PAGES.indexOf(mode) + 1) % METER_PAGES.length]
-      return setMode(next)
-    }
-    if (mode !== 'char') return setMode('char')
-    const next = sel === null ? 0 : (sel + 1) % icons.length
-    setSel(next)
-    say(icons[next].label, PICK_MS)
-  }
-  const pressB = (): void => {
-    if (mode === 'battle') {
-      // Mid-fight, B skips to the end; otherwise it takes the next friend's code.
-      if (duel && !outcome) return setStep(duel.bout.blows.length)
-      return void pasteCode()
-    }
-    if (sel === null) return setMode(mode === 'clock' ? 'char' : 'clock')
-    icons[sel].run()
-  }
-  const pressC = (): void => {
-    // C is "never mind": it also shuts the pet up, so a long answer can be
-    // dismissed instead of waited out.
-    setSpeech(null)
-    if (resting) return endBreak()
-    if (mode === 'battle' && duel) return leaveDuel()
-    if (mode !== 'char') {
-      setTalking(false)
-      setMode('char')
-      return
-    }
-    setTalking(false)
-    setSel(null)
-  }
-  keysRef.current = { a: pressA, b: pressB, c: pressC }
 
   // ---- looking after the pets (the pet panel, PetManage) ----
   const ref0 = (i: number): { index: number; bornAt: number } => ({ index: i, bornAt: pets[i]?.bornAt ?? -1 })
@@ -1930,6 +1873,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       }}
     >
       <input
+        ref={askRef}
         name="q"
         autoFocus
         autoComplete="off"
@@ -1948,7 +1892,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       {focusAssist?.cards.map((c) => (
         <AssistCardView key={c.id} card={c} onAnswer={(choices) => chooseAssistant(Math.floor(pet.bornAt), c.id, choices)} />
       ))}
-      {!focusAssist?.cards.length && focusReply && <p className="pet-assist-reply">{focusReply}</p>}
+      {!focusAssist?.cards.length && focusReply && (
+        <div className="pet-assist-reply">
+          <Markdown text={focusReply} />
+        </div>
+      )}
       {/* Its state on a line of its own: beside the buttons it was cut to a letter. */}
       {focusAssist?.busy ? (
         <p className="pet-assist-state">
@@ -2026,6 +1974,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         </button>
       ))}
       <div className="pet-menu-sep" />
+      {/* A pet assistant's conversation, as a panel of riven's window. */}
+      {isAssistant(pet.assistant) && (
+        <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(() => openChat(Math.floor(pet.bornAt)))}>
+          <span>{t('pet.assist.open')}</span>
+        </button>
+      )}
       {detached && (
         <button
           type="button"
@@ -2155,14 +2109,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       onContextMenu={(e) => {
         e.preventDefault()
         if (menu) return setMenu(false)
-        const el = ref.current
-        if (!el) return
-        // Beside the whole row of pets, so the menu never covers one of them.
-        setMenuAt((el.querySelector('.pet-stage') ?? el).getBoundingClientRect())
-        const hi = menuLine()
-        menuHi.current = hi
-        speak(hi, MENU_HI_MS)
-        setMenu(true)
+        openMenu()
       }}
       // The floating window never gets focus, so no Esc and no blur reach it:
       // leaving it is how the menu closes there. A pointerleave alone is not
@@ -2205,7 +2152,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             title={t('pet.bare.hint')}
             onClick={() => {
               if (Date.now() - dragEndAt.current < 300) return
-              icons.find((ic) => ic.id === 'pet')?.run()
+              if (menu) setMenu(false)
+              else openMenu()
             }}
             onPointerDown={onBareDown}
             onPointerMove={onBareMove}

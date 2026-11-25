@@ -1,4 +1,4 @@
-import { caps } from '../../../../../main/db/engines'
+import { caps } from '../../../../../shared/db/engines'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
 import { ArrowRight, Copy, Download, FileCode2, GitCompare, Play, RefreshCw, TriangleAlert } from 'lucide-react'
@@ -11,8 +11,8 @@ import {
   type DiffKind,
   type DiffStatus,
   type SchemaSnapshot
-} from '../../../../../main/db/schemaDiff'
-import type { SchemaInfo } from '../../../../../main/db/types'
+} from '../../../../../shared/db/schemaDiff'
+import type { SchemaInfo } from '../../../../../shared/db/types'
 import { editorTheme } from '../../../editor/highlight'
 import { useT } from '../../../i18n'
 import { Button, Select, TextInput } from '../../../components/ui/Controls'

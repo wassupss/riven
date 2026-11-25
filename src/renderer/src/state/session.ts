@@ -34,7 +34,7 @@ export interface PaneState {
   log?: unknown[] // transcript (Msg[]), capped
   // The user opened this pane themselves, so it must start as an empty
   // conversation — never adopt the workspace's most recent session (see the
-  // adopt effect in ChatPanel). Set once at creation and kept for the pane's life.
+  // adopt effect in CliChatPanel). Set once at creation and kept for the pane's life.
   fresh?: boolean
   // A terminal the user chose to show on paired phones (state/remoteTerms). Off
   // unless turned on from the tab's menu; a phone cannot set it.
@@ -43,11 +43,6 @@ export interface PaneState {
   // kind's default, 'none', or its own. Saved here so it survives restarts and
   // goes wherever the panel goes, a popped-out window included.
   bg?: PanelBg | 'none'
-  // What runs the chat: 'cli' = the interactive CLI in a hidden pty
-  // (services/clichat, CliChatPanel); absent = the headless driver
-  // (services/chat, ChatPanel). Chosen at creation (Settings: chatEngine) and
-  // kept, so a saved layout reopens each pane the way it was made.
-  engine?: 'cli'
 }
 
 export interface Session {

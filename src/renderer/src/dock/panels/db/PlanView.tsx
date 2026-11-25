@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Copy } from "lucide-react";
-import type { Plan, PlanNode } from "../../../../../main/db/explain";
+import type { Plan, PlanNode } from "../../../../../shared/db/explain";
 import { useT } from "../../../i18n";
 import { Segmented } from "../../../components/ui/Controls";
 

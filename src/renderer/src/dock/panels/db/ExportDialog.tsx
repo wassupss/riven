@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useHost } from '../../../lib/hostWindow'
-import type { QueryColumn } from '../../../../../main/db/types'
+import type { QueryColumn } from '../../../../../shared/db/types'
 import {
   projectRow,
   suggestMask,
@@ -10,7 +10,7 @@ import {
   type ExportFormat,
   type ExportOptions,
   type MaskMode
-} from '../../../../../main/db/mask'
+} from '../../../../../shared/db/mask'
 import { useT } from '../../../i18n'
 import { dbUid } from '../../../state/db'
 import { Button, NumberInput, Segmented, Select, Switch, TextInput } from '../../../components/ui/Controls'

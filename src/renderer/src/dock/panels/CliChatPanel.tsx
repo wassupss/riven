@@ -27,6 +27,8 @@ import { McpCard, ModelCard } from './chatkit/Cards'
 import { modelCommand, nativeCommand } from './chatkit/slash'
 import { AgentsStrip, QueueStrip, WorkStrip, useTicker, type LiveAgent } from './chatkit/Strips'
 import { fmtDur } from './chatkit/format'
+import { useDrainedText } from '../../lib/textDrain'
+import Markdown from '../../components/Markdown'
 import '../../styles/cli-chat.css'
 
 // The CLI chat: the REAL interactive `claude` or `codex`, run by Rust in a
@@ -60,6 +62,8 @@ const WINDOW_STEP = 50
 // "Working" says how long it has been quiet past this (see the chat pane's
 // running foot): long silence inside one tool is normal, but worth seeing.
 const QUIET_MS = 90_000
+/** A finished turn whose reply never reaches the transcript: its preview goes after this. */
+const UNLANDED_SETTLE_MS = 5_000
 
 // Only a turn with an Agent/Task call needs the agents map: every other turn
 // keeps a constant prop, so progress ticks do not re-render the transcript.
@@ -106,8 +110,7 @@ export default function CliChatPanel({
   // Settings > AI, read at each launch (a restart picks up a change), as the
   // chat pane does: the global prompt with a group member's persona appended
   // (a system prompt, never a chat turn), riven's tools switched off, the
-  // built-ins held back from the allow list, the autocompact window, a
-  // custom agent (.claude/agents) and the workspace's account profile.
+  // built-ins held back from the allow list, a custom agent (.claude/agents) and the workspace's account profile.
   const opts = (extra: { resume?: string; fork?: boolean } = {}): Parameters<typeof window.api.cliChat.start>[1] => {
     const st = getSettings()
     const persona = (pane0.persona ?? '').trim()
@@ -118,7 +121,6 @@ export default function CliChatPanel({
       permissionMode: pickedMode,
       mcpDisabled: st.mcpDisabledTools,
       toolsDenied: st.deniedTools,
-      autocompact: st.autocompact,
       globalPrompt: persona ? [st.globalPrompt?.trim(), persona].filter(Boolean).join('\n\n') : st.globalPrompt,
       agent: params.agent || pane0.agent || undefined,
       cli,
@@ -220,13 +222,27 @@ export default function CliChatPanel({
 
   const turns = useMemo(() => buildTurns(model.items), [model.items])
   const usedModel = useMemo(() => lastModel(model.items), [model.items])
+  const hiddenText = useMemo(() => new Set(model.previewHides), [model.previewHides])
 
   // Follow the conversation unless the person scrolled up to read.
   const [pinnedBottom, setPinnedBottom] = useState(true)
-  useEffect(() => {
+  const followBottom = useCallback((): void => {
     const el = scrollRef.current
     if (el && atBottom.current) el.scrollTop = el.scrollHeight
-  }, [turns, model.preview, model.permissions, model.questions, state.busy, state.menu])
+  }, [])
+  // The reply in flight: streamed text drawn out toward the transcript's text (the tail of the last turn).
+  const livePreview = model.preview ? (
+    <LivePreview
+      text={model.preview}
+      final={!state.busy}
+      landed={model.previewHides.length > 0}
+      onGrow={followBottom}
+      onSettled={() => dispatch({ key, kind: 'settle' })}
+    />
+  ) : null
+  useEffect(() => {
+    followBottom()
+  }, [turns, model.preview, model.permissions, model.questions, state.busy, state.menu, followBottom])
 
   // Only the recent turns are drawn (a long transcript is thousands of DOM
   // nodes); scrolling to the top shows more. Frozen while the pane is hidden:
@@ -560,19 +576,20 @@ export default function CliChatPanel({
               </button>
             )}
             {turns.length === 0 && !model.preview && <div className="cli-chat-empty">{t('clichat.empty')}</div>}
-            {shown.map((turn) => (
-              <TurnView key={turn.key} chatKey={key} turn={turn} agents={agentsFor(turn, model.agents)} />
+            {shown.map((turn, i) => (
+              <TurnView
+                key={turn.key}
+                chatKey={key}
+                turn={turn}
+                agents={agentsFor(turn, model.agents)}
+                hidden={hiddenText}
+                // The reply in flight lives at the end of the last turn, where its
+                // transcript text goes: the swap is the same spot, not a second block.
+                tail={i === shown.length - 1 && model.preview ? livePreview : undefined}
+              />
             ))}
-            {state.busy &&
-              (model.preview ? (
-                // Best-effort text of the reply still streaming (hook lines /
-                // screen); the transcript's version replaces it.
-                <div className="chat-turn assistant cli-chat-assistant">
-                  <div className="chat-assistant-text cli-chat-preview">{model.preview}</div>
-                </div>
-              ) : (
-                <Working chatKey={key} since={turnStart.current} />
-              ))}
+            {!shown.length && model.preview && <div className="chat-turn assistant cli-chat-assistant">{livePreview}</div>}
+            {!model.preview && state.busy && <Working chatKey={key} since={turnStart.current} />}
             {cards.map((c) =>
               c.kind === 'mcp' ? (
                 <McpCard key={c.id} cwd={cwd} configDir={configDir} onDismiss={() => dismissCard(c.id)} />
@@ -670,6 +687,45 @@ export default function CliChatPanel({
 
 // "Working" while a turn runs with nothing streaming yet: for how long, and,
 // past QUIET_MS without a sign of life, for how long it has been silent.
+// The reply still streaming, revealed at the input rate instead of dumped whole
+// each time the preview updates (lib/textDrain.ts).
+function LivePreview({
+  text,
+  final,
+  landed,
+  onGrow,
+  onSettled
+}: {
+  text: string
+  /** The turn has ended: once drawn out, the preview is done. */
+  final: boolean
+  /** The transcript copy of the reply is in (its text is hidden under the preview). */
+  landed: boolean
+  onGrow: () => void
+  onSettled: () => void
+}): JSX.Element {
+  const shown = useDrainedText(text, onGrow)
+  useEffect(() => {
+    if (!final) return
+    // Done only once the transcript has the reply too: giving up the preview before
+    // that leaves a gap, and the whole answer then pops in after it.
+    if (landed && shown === text) {
+      onSettled()
+      return
+    }
+    // Fallback for a turn whose reply never reaches the transcript (interrupted, errors).
+    if (!landed) {
+      const t = window.setTimeout(onSettled, UNLANDED_SETTLE_MS)
+      return () => window.clearTimeout(t)
+    }
+  }, [final, landed, shown, text, onSettled])
+  return (
+    <div className="chat-assistant-text cli-chat-preview">
+      <Markdown text={shown} />
+    </div>
+  )
+}
+
 function Working({ chatKey, since }: { chatKey: string; since: number }): JSX.Element {
   const t = useT()
   const now = useTicker(true)

@@ -294,8 +294,11 @@ pub fn drag_end() {
   }
 }
 
-pub fn press(key: &Value) {
-  broadcast("pet:press", json!([key]));
+/// The floating pet's window on screen, in logical points (where a window beside it goes).
+pub fn window_box() -> Option<Value> {
+  let w = win()?;
+  let b = bounds(&w)?;
+  Some(json!({ "x": b.x, "y": b.y, "w": b.w, "h": b.h }))
 }
 
 /// Number(min) || 0

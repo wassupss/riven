@@ -832,13 +832,13 @@
 }
 .pet-ask input {
   width: 100%;
-  height: 19px;
-  padding: 0 6px;
+  height: 30px;
+  padding: 0 9px;
   border: 1px solid var(--edge-strong);
-  border-radius: 4px;
+  border-radius: 7px;
   background: color-mix(in srgb, black 35%, var(--bg-2));
   color: var(--fg);
-  font-size: 9px;
+  font-size: 12px;
   font-family: inherit;
   -webkit-app-region: no-drag;
 }
@@ -1620,17 +1620,28 @@
   line-height: 1.35;
   min-width: 0;
 }
+/* The answer: read it, not glance at it. Full-size text, rendered as markdown,
+   and room for a long one (it scrolls past that). */
 .pet-assist-reply {
   margin: 0;
-  max-height: 96px;
+  max-height: 300px;
   overflow-y: auto;
-  padding: 3px 5px;
-  border-radius: 4px;
+  padding: 8px 10px;
+  border-radius: 7px;
   background: color-mix(in srgb, black 25%, var(--bg-2));
   color: var(--fg);
-  white-space: pre-wrap;
+  font-size: 12.5px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
   word-break: keep-all;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.pet-assist-reply > .md > :first-child {
+  margin-top: 0;
+}
+.pet-assist-reply > .md > :last-child {
+  margin-bottom: 0;
 }
 .pet-assist-card {
   display: flex;
@@ -1799,4 +1810,16 @@
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
+}
+
+/* The assistant's conversation as a dock panel: fills the panel, the body scrolls. */
+.assistant-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.assistant-panel .pet-chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
 }

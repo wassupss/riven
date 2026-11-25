@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useHost } from '../../../lib/hostWindow'
-import type { ConnectionConfig, ConnectionInfo, DbKind, SslMode } from '../../../../../main/db/types'
-import { ENGINE_KINDS, caps } from '../../../../../main/db/engines'
+import type { ConnectionConfig, ConnectionInfo, DbKind, SslMode } from '../../../../../shared/db/types'
+import { ENGINE_KINDS, caps } from '../../../../../shared/db/engines'
 import { useT } from '../../../i18n'
 import { Button, NumberInput, Select, Switch, TextArea, TextInput } from '../../../components/ui/Controls'
 

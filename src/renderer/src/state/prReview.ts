@@ -61,7 +61,7 @@ export const usePrReview = create<PrReviewState>((set) => ({
 
 // One PR's pending comments. Selecting the whole record and narrowing here
 // keeps zustand from handing React a fresh array every render (see the same
-// trap in ChangesPanel: Object.is on a new array re-renders forever).
+// trap in the PR diff panel: Object.is on a new array re-renders forever).
 export function draftsFor(drafts: Record<string, DraftComment[]>, key: string): DraftComment[] {
   return drafts[key] ?? EMPTY
 }

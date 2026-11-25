@@ -3,7 +3,6 @@ import { t } from '../i18n'
 import { isPaneBusy } from '../state/workspaceStatus'
 import { focusPane, focusEditor, requestPaneFocusOnOpen } from '../keybindings/focus'
 import { getSettings } from '../state/settings'
-import { chatEngine, type ChatEngine } from '../lib/chatEngine'
 import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
 import { renameAgent, getAgentStatus } from '../state/agents'
 import { useAgentGroups } from '../state/agentGroups'
@@ -167,7 +166,7 @@ export function newChatKey(): string {
 
 // First-message text for a freshly created chat pane, delivered ONE-SHOT so it is
 // never serialized into the dock layout (which caused the priming message to be
-// re-sent on every restart). ChatPanel consumes+clears it on mount.
+// re-sent on every restart). CliChatPanel consumes+clears it on mount.
 const pendingInitial = new Map<string, string>()
 export function hasInitialText(chatKey: string): boolean {
   return pendingInitial.has(chatKey)
@@ -331,9 +330,7 @@ export function addChat(
   // passes ITS OWN workspace so the pane never lands in the visible one.
   inWorkspace?: string | null,
   // Which agent backs the pane. Omitted = Claude Code.
-  cli?: 'claude' | 'codex',
-  // What runs it. Omitted = Settings' chatEngine (see chatEngineFor).
-  engine?: 'cli' | 'native'
+  cli?: 'claude' | 'codex'
 ): string {
   const target = dockAndWidFor(inWorkspace)
   if (!target) return ''
@@ -349,7 +346,6 @@ export function addChat(
     agent: agent || undefined,
     persona: persona || undefined,
     cli: cli === 'codex' ? 'codex' : undefined,
-    engine: chatEngineFor(cli, engine) === 'cli' ? 'cli' : undefined,
     // Newly created here, so it starts an empty conversation instead of adopting
     // the workspace's most recent session. Only panes born through addChat get
     // this; a pane restored from a saved layout keeps the old fallback.
@@ -378,19 +374,9 @@ export function addChat(
   return id
 }
 
-/** What runs a new chat pane (lib/chatEngine): explicit, else Settings' chatEngine. */
-export function chatEngineFor(cli?: 'claude' | 'codex', engine?: ChatEngine): ChatEngine {
-  return chatEngine(cli, engine, getSettings().chatEngine)
-}
-
-/** A chat pane on the CLI chat whatever the setting (the palette command). */
+/** A new chat pane: the CLI chat (the palette command). */
 export function addCliChat(inWorkspace?: string | null): string {
-  return addChat(undefined, undefined, undefined, undefined, undefined, false, undefined, undefined, inWorkspace, 'claude', 'cli')
-}
-
-/** A chat pane on the headless chat whatever the setting (the palette command). */
-export function addNativeChat(): string {
-  return addChat(undefined, undefined, undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, 'native')
+  return addChat(undefined, undefined, undefined, undefined, undefined, false, undefined, undefined, inWorkspace, 'claude')
 }
 
 // Rename a live pane's tab and re-pin the title so it survives a reload and
@@ -488,7 +474,7 @@ export type NamedPanel =
   | 'editor'
   | 'search'
   | 'git'
-  | 'changes'
+  | 'assistant'
   | 'preview'
   | 'notes'
   | 'api'
@@ -752,34 +738,76 @@ export function openEditorSplit(path?: string): void {
   else api.getPanel('editor')?.api.setActive()
 }
 
-// Auto-open the changes timeline when an agent edit arrives (idempotent). Opens
-// it on the left WITHOUT stealing focus from the terminal the user is typing in,
-// so agent activity surfaces the summary without hijacking the cursor.
-// Not below the dock's own floor: at 240 against a 260 minimum the two pushed
-// the column back and forth, moving its neighbour each time.
-const CHANGES_WIDTH = MIN_PANEL_WIDTH
+// A pet assistant's conversation as a panel of its own (it pops out like any other).
+// One per assistant: asking for it again brings it up.
+/** The assistant conversation's panel, in riven's window or in a popout window. */
+function findAssistant(bornAt: number): { close: () => void } | null {
+  const api = activeApi
+  if (!api) return null
+  const id = `assistant-${Math.floor(bornAt)}`
+  const inside = api.getPanel(id)
+  if (inside) return { close: () => api.removePanel(inside) }
+  for (const pg of api.getPopouts() as unknown as Array<{ window?: { close(): void }; group?: { panels: Array<{ id: string }> } }>) {
+    if (pg.group?.panels.some((p) => p.id === id)) return { close: () => pg.window?.close() }
+  }
+  return null
+}
 
-export function ensureChanges(): void {
+/** Whether this pet's conversation is open (in riven's window or in its own window). */
+export function assistantOpen(bornAt: number): boolean {
+  return findAssistant(bornAt) !== null
+}
+
+/** Close this pet's conversation panel (or its window). */
+export function closeAssistant(bornAt: number): void {
+  findAssistant(bornAt)?.close()
+}
+
+export async function addAssistant(bornAt: number): Promise<void> {
   const api = activeApi
   if (!api) return
-  // Already open: leave it exactly as the user has it. This used to re-pin it to
-  // 240px on EVERY agent edit, so with a chat and a terminal CLI both editing,
-  // the panels next to it kept resizing themselves.
-  if (api.getPanel('changes')) return
-  const prev = api.activePanel
+  const id = `assistant-${Math.floor(bornAt)}`
+  const existing = api.getPanel(id)
+  if (existing) {
+    existing.api.setActive()
+    return
+  }
+  const W = 540
+  const H = 680
   const panel = api.addPanel({
-    id: 'changes',
-    component: 'changes',
-    title: t('title.changes'),
+    id,
+    component: 'assistant',
+    title: t('title.assistant'),
     renderer: 'always',
-    // Open on the far right at a sidebar width — the Changes timeline is a narrow
-    // summary list, not a half-split. (initialWidth alone is sometimes ignored on
-    // a directional split, so also pin the group size explicitly.)
-    initialWidth: CHANGES_WIDTH,
-    position: { direction: 'right' }
+    params: { bornAt: Math.floor(bornAt) }
   })
-  panel.group.api.setSize({ width: CHANGES_WIDTH })
-  prev?.api.setActive()
+  // The floating pet is a window on the desktop: the conversation is its own window
+  // just to the pet's left, so both show at once.
+  const box = await window.api.pet.windowBox().catch(() => null)
+  if (box) {
+    try {
+      await api.addPopoutGroup(panel, {
+        position: { left: Math.max(0, box.x - W - 8), top: Math.max(0, box.y), width: W, height: H }
+      })
+      return
+    } catch (e) {
+      console.error('[dock] assistant window failed, using a floating panel', e)
+    }
+  }
+  // The pet is inside riven's window: a floating panel over the layout, just to the
+  // pet's left (the pet's place on screen, measured against the dock).
+  const petEl = document.querySelector('.pet-device .pet-stage') as HTMLElement | null
+  if (petEl) {
+    const pr = petEl.getBoundingClientRect()
+    const dr = (document.querySelector('.dv-dockview') as HTMLElement | null)?.getBoundingClientRect() ?? { left: 0, top: 0 }
+    api.addFloatingGroup(panel, {
+      width: W,
+      height: H,
+      position: { left: Math.max(0, pr.left - dr.left - W - 8), top: Math.max(0, pr.top - dr.top) }
+    })
+    return
+  }
+  api.addFloatingGroup(panel, { width: W, height: H, position: { bottom: 56, right: 24 } })
 }
 
 const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right' | 'below' }> = {
@@ -787,7 +815,6 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   preview: { titleKey: 'title.preview', direction: 'right' },
   search: { titleKey: 'title.search', direction: 'left' },
   git: { titleKey: 'title.git', direction: 'left' },
-  changes: { titleKey: 'title.changes', direction: 'right' },
   notes: { titleKey: 'title.notes', direction: 'right' },
   api: { titleKey: 'title.api', direction: 'right' },
   db: { titleKey: 'title.db', direction: 'right' },

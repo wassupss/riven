@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 
 // A registry of the open chat panes so they can act as delegatable "agents"
-// (riven_agents / riven_ask_agent(s) / group_* / start_pipeline). Each ChatPanel
-// registers a controller on mount; the agent MCP tools resolve a target by id,
+// (riven_agents / riven_ask_agent(s) / group_* / start_pipeline). Each CLI chat
+// pane registers a controller on mount; the agent MCP tools resolve a target by id,
 // title or role, send it a message, and await its next completed reply.
 
 export interface AgentController {
@@ -335,5 +335,4 @@ export function interruptPane(chatKey: string): void {
   const c = controllers.get(chatKey)
   if (c?.remote) return c.remote.stop()
   window.api.cliChat.interrupt(chatKey)
-  window.api.chat.interrupt(chatKey)
 }

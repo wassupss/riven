@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { SearchHit, SearchOptions } from '../../../main/db/dataSearchSql'
+import type { SearchHit, SearchOptions } from '../../../shared/db/dataSearchSql'
 import { dbUid, useDb } from './db'
 
 // Full data search runs, by console tab. Kept outside the view so a search

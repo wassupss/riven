@@ -101,11 +101,10 @@ pub struct StartOpts {
   pub config_dir: Option<String>,
   /// The chat settings the headless chat launches with (Settings > AI):
   /// riven's own tools switched off, built-in tools held back from the
-  /// allow list (the CLI asks for them), the autocompact window, the global
-  /// prompt (with a group member's persona), and a custom agent.
+  /// allow list (the CLI asks for them), the global prompt (with a group
+  /// member's persona), and a custom agent.
   pub mcp_disabled: Option<Vec<String>>,
   pub tools_denied: Option<Vec<String>>,
-  pub autocompact: Option<String>,
   pub global_prompt: Option<String>,
   pub agent: Option<String>,
   /// "codex" runs the interactive codex (codex.rs); anything else claude.
@@ -213,6 +212,9 @@ struct Sess {
   // What the screen showed when the real message landed: the same reply is
   // still on screen afterwards and must not come back as a preview.
   landed: Option<String>,
+  // The reply in flight is in the transcript: its preview is no longer read from
+  // the screen (it would only repeat the reply), until the next message is sent.
+  reply_landed: bool,
   terminal: bool,
   perms: Vec<Pending>,
   dead: bool,
@@ -392,9 +394,6 @@ pub fn command_line(real: Option<&str>, flags: &Flags, settings: &str, opts: &St
   if let Some(a) = opts.agent.as_deref().filter(|a| !a.is_empty()) {
     c.push(format!("--agent {}", sq(a)));
   }
-  if let Some(ac) = crate::services::agentcli::autocompact_arg(opts.autocompact.as_deref()) {
-    c.push(format!("--autocompact {ac}"));
-  }
   if let Some(m) = opts.model.as_deref().filter(|m| !m.is_empty() && *m != "default") {
     c.push(format!("--model {}", sq(m)));
   }
@@ -532,6 +531,7 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
     shown: None,
     preview: None,
     landed: None,
+    reply_landed: false,
     terminal: false,
     perms: Vec::new(),
     dead: false,
@@ -813,11 +813,12 @@ fn pump(st: &mut Sess) {
       }
     };
     st.sent = items.iter().map(|i| i.key().to_string()).collect();
-    // The real message is in: the preview has done its job.
+    // The real message is in. The preview is NOT cleared here: the page draws it
+    // out to the transcript's text and clears it itself (cliChat.ts 'settle').
     if landed_text {
       st.shown = None;
+      st.reply_landed = true;
       landed_now = true;
-      set_preview(st, None);
     }
   }
   // 2. Subagents, while anything may be running.
@@ -879,7 +880,11 @@ fn pump(st: &mut Sess) {
   }
   // 5. The reply in flight.
   if st.busy {
-    let from_screen = screen.as_deref().and_then(extract).filter(|t| st.landed.as_deref() != Some(t.as_str()));
+    let from_screen = if st.reply_landed {
+      None
+    } else {
+      screen.as_deref().and_then(extract).filter(|t| st.landed.as_deref() != Some(t.as_str()))
+    };
     let from_hook = st.shown.as_ref().map(|(_, t)| t.clone()).filter(|t| !t.trim().is_empty());
     // The screen is ahead of the hook (it has the line being written); the
     // hook is right when the screen heuristic finds nothing.
@@ -1018,7 +1023,7 @@ pub fn interrupt(key: &str) {
   for p in st.perms.drain(..) {
     let _ = p.tx.send(Decision::Terminal);
   }
-  set_preview(&mut st, None);
+  // The preview is left for the page to draw out and clear (see 'settle').
   emit_state(&st);
 }
 
@@ -1260,11 +1265,16 @@ pub fn hook(pane: Option<&str>, agent: Option<&str>, event: &str, body: &str) ->
   let tool = payload.get("tool_name").and_then(Value::as_str).unwrap_or("").to_string();
   match event {
     "UserPromptSubmit" => {
+      // A message sent while a reply streams: that reply stays on screen, its
+      // preview and landed state with it (the page settles it). A new turn starts clean.
+      if !st.busy {
+        st.shown = None;
+        st.landed = None;
+        st.preview = None;
+      }
       st.busy = true;
       st.waiting = false;
-      st.shown = None;
-      st.landed = None;
-      set_preview(&mut st, None);
+      st.reply_landed = false;
       emit_state(&st);
     }
     "Stop" | "StopFailure" | "SessionEnd" => {
@@ -1415,11 +1425,9 @@ mod tests {
     let none = Flags::default();
     let r = command_line(None, &none, "/s", &StartOpts { model: Some("default".into()), ..Default::default() }, "id", Some("id"), false);
     assert_eq!(r, "claude --settings '/s' --resume 'id'");
-    // A custom agent and the autocompact window (out of range: dropped).
-    let a = StartOpts { agent: Some("rev iewer".into()), autocompact: Some("250k".into()), ..Default::default() };
-    assert_eq!(command_line(None, &none, "/s", &a, "id", None, false), "claude --settings '/s' --agent 'rev iewer' --autocompact 250000 --session-id 'id'");
-    let a = StartOpts { autocompact: Some("5m".into()), ..Default::default() };
-    assert_eq!(command_line(None, &none, "/s", &a, "id", None, false), "claude --settings '/s' --session-id 'id'");
+    // A custom agent.
+    let a = StartOpts { agent: Some("rev iewer".into()), ..Default::default() };
+    assert_eq!(command_line(None, &none, "/s", &a, "id", None, false), "claude --settings '/s' --agent 'rev iewer' --session-id 'id'");
     // A fork names its new id; "default" is spelled the way 2.1.330 takes it.
     let f = command_line(None, &none, "/s", &StartOpts { permission_mode: Some("default".into()), ..Default::default() }, "new", Some("old"), true);
     assert_eq!(f, "claude --settings '/s' --permission-mode 'manual' --resume 'old' --fork-session --session-id 'new'");

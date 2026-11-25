@@ -96,10 +96,12 @@ let lastOn: Map<number, boolean> | null = null
 let home: string | null = null
 
 /** The conversation dialog (components/PetChatDialog) open in this window. */
-export const usePetChat = create<{ open: number | null }>(() => ({ open: null }))
+// `seq` counts requests to open a conversation: asking again for one that is already
+// open still moves the caret to its field.
+export const usePetChat = create<{ open: number | null; seq: number }>(() => ({ open: null, seq: 0 }))
 
 export function openPetChat(bornAt: number): void {
-  usePetChat.setState({ open: Math.floor(bornAt) })
+  usePetChat.setState((s) => ({ open: Math.floor(bornAt), seq: s.seq + 1 }))
 }
 export function closePetChat(): void {
   usePetChat.setState({ open: null })
@@ -194,7 +196,6 @@ function startOpts(pet: AssistPet, l: Launch, resume: string | undefined, parked
     permissionMode: l.permission,
     mcpDisabled: st.mcpDisabledTools,
     toolsDenied: st.deniedTools,
-    autocompact: st.autocompact,
     // The keeper's own prompt (Settings > AI), then the pet's persona: a
     // system prompt, never a chat turn.
     globalPrompt: [st.globalPrompt?.trim(), l.prompt].filter(Boolean).join('\n\n'),

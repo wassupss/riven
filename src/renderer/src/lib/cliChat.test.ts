@@ -48,7 +48,7 @@ describe('cliChat reduce', () => {
     expect(m.items).toHaveLength(1)
   })
 
-  it('drops the preview when a turn ends, keeps it while busy', () => {
+  it('keeps the preview when a turn ends, until the page has drawn it out', () => {
     const state = (busy: boolean): CliEvent => ({
       key: K,
       kind: 'state',
@@ -65,6 +65,8 @@ describe('cliChat reduce', () => {
     m = reduce(m, state(true))
     expect(m.preview).toBe('one\ntwo')
     m = reduce(m, state(false))
+    expect(m.preview).toBe('one\ntwo')
+    m = reduce(m, { key: K, kind: 'settle' })
     expect(m.preview).toBeNull()
   })
 
@@ -238,5 +240,80 @@ describe('queue', () => {
     expect(canSendQueued({ ...idle, parked: true })).toBe(true)
     expect(canSendQueued({ ...idle, ready: true, dead: true })).toBe(false)
     expect(canSendQueued({ ...idle, ready: true, terminal: true })).toBe(false)
+  })
+})
+
+describe('live preview vs transcript', () => {
+  const K = 'k1'
+  it('a landed text stays on screen as the preview, its transcript copy hidden until the turn ends', () => {
+    let m = initialModel()
+    m = reduce(m, { key: K, kind: 'state', busy: true, dead: false } as never)
+    m = reduce(m, { key: K, kind: 'preview', text: 'hello world' } as never)
+    m = reduce(m, {
+      key: K,
+      kind: 'items',
+      reset: false,
+      items: [{ kind: 'text', key: 'a1', msgId: 'm1', text: 'hello world' }]
+    } as never)
+    expect(m.preview).toBe('hello world')
+    expect(m.previewHides).toEqual(['a1'])
+    // The turn ended: the landed reply stays until the panel has drawn it out.
+    m = reduce(m, { key: K, kind: 'state', busy: false, dead: false } as never)
+    expect(m.preview).toBe('hello world')
+    expect(m.previewHides).toEqual(['a1'])
+    m = reduce(m, { key: K, kind: 'settle' } as never)
+    expect(m.preview).toBeNull()
+    expect(m.previewHides).toEqual([])
+  })
+  it('a turn that ends before its text lands keeps the preview for the transcript copy', () => {
+    let m = initialModel()
+    m = reduce(m, { key: K, kind: 'state', busy: true, dead: false } as never)
+    m = reduce(m, { key: K, kind: 'preview', text: 'half' } as never)
+    m = reduce(m, { key: K, kind: 'state', busy: false, dead: false } as never)
+    expect(m.preview).toBe('half')
+    m = reduce(m, { key: K, kind: 'items', reset: false, items: [{ key: 'a1', kind: 'text', text: 'half done' }] } as never)
+    expect(m.preview).toBe('half done')
+    expect(m.previewHides).toEqual(['a1'])
+  })
+  it('a tool after the streamed text ends the preview, so the text goes in order', () => {
+    let m = initialModel()
+    m = reduce(m, { key: K, kind: 'state', busy: true, dead: false } as never)
+    m = reduce(m, { key: K, kind: 'preview', text: 'still typing' } as never)
+    m = reduce(m, {
+      key: K,
+      kind: 'items',
+      reset: false,
+      items: [{ kind: 'tool', key: 't1', toolId: 'x', name: 'Read', input: {} }]
+    } as never)
+    expect(m.preview).toBeNull()
+    expect(m.previewHides).toEqual([])
+  })
+  it('a new streamed message brings back what the last one hid', () => {
+    let m = initialModel()
+    m = reduce(m, { key: K, kind: 'state', busy: true, dead: false } as never)
+    m = reduce(m, { key: K, kind: 'preview', text: 'first' } as never)
+    m = reduce(m, {
+      key: K,
+      kind: 'items',
+      reset: false,
+      items: [{ kind: 'text', key: 'a1', msgId: 'm1', text: 'first' }]
+    } as never)
+    m = reduce(m, { key: K, kind: 'preview', text: 'second' } as never)
+    expect(m.preview).toBe('second')
+    expect(m.previewHides).toEqual([])
+  })
+})
+
+describe('live preview covers the whole reply', () => {
+  it('two paragraphs landing one after the other stay one preview, none shown twice', () => {
+    let m = initialModel()
+    m = reduce(m, { key: K, kind: 'items', reset: false, items: [{ key: 'u1', kind: 'user', text: 'hi', command: null, images: 0 }] } as never)
+    m = reduce(m, { key: K, kind: 'state', busy: true, dead: false } as never)
+    m = reduce(m, { key: K, kind: 'preview', text: 'first' } as never)
+    m = reduce(m, { key: K, kind: 'items', reset: false, items: [{ key: 'a1', kind: 'text', msgId: 'm', text: 'first' }] } as never)
+    expect(m.preview).toBe('first')
+    m = reduce(m, { key: K, kind: 'items', reset: false, items: [{ key: 'a2', kind: 'text', msgId: 'm', text: 'second' }] } as never)
+    expect(m.preview).toBe('first\n\nsecond')
+    expect(m.previewHides).toEqual(['a1', 'a2'])
   })
 })

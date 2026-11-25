@@ -286,26 +286,6 @@ pub async fn configured_mcp_servers(cwd: &str, config_dir: Option<&str>) -> Vec<
   tokio::task::spawn_blocking(move || servers_from_config(&cwd, cd.as_deref())).await.unwrap_or_default()
 }
 
-/// Fold what a live session actually loaded (its init event) into the cache.
-pub fn remember_session_servers(cwd: &str, config_dir: Option<&str>, names: &[String]) {
-  let clean: Vec<String> = names.iter().filter(|n| !n.is_empty() && *n != "riven").cloned().collect();
-  if clean.is_empty() {
-    return;
-  }
-  let k = key(cwd, config_dir);
-  {
-    let mut c = cache().lock().unwrap();
-    c.load();
-    let hit = c.map.get(&k).cloned();
-    let merged = union_names(&hit.as_ref().map(|h| h.names.clone()).unwrap_or_default(), &clean);
-    if hit.as_ref().is_some_and(|h| merged.len() == h.names.len()) {
-      return;
-    }
-    c.set(&k, Hit { names: merged, at: hit.map(|h| h.at).unwrap_or(0.0) });
-  }
-  save_cache();
-}
-
 // ---- `claude mcp …` ---------------------------------------------------------------
 
 /// runClaudeMcp: login env, stdout+stderr together, ok on exit 0.

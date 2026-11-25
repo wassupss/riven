@@ -4,14 +4,31 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
-    "types": ["node", "vite/client"],
+    "types": [
+      "node",
+      "vite/client"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["src/renderer/src/*"] }
+    "paths": {
+      "@/*": [
+        "src/renderer/src/*"
+      ]
+    }
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*", "src/preload/index.ts", "src/preload/api.d.ts", "src/main/db/types.ts", "src/main/db/sqlText.ts", "src/main/db/mask.ts", "src/main/db/edit.ts", "src/main/db/ddl.ts", "src/main/db/privs.ts", "src/main/db/complete.ts", "src/main/db/explain.ts", "src/main/db/monitor.ts", "src/main/db/csv.ts", "src/main/db/erd.ts", "src/main/db/dumpArgs.ts", "src/main/db/schemaDiff.ts", "src/main/db/dataSearchSql.ts", "src/main/db/engines.ts"]
+  "include": [
+    "src/renderer/**/*",
+    "src/shared/**/*",
+    "src/preload/index.ts",
+    "src/preload/api.d.ts",
+    "tauri/page/**/*"
+  ]
 }
