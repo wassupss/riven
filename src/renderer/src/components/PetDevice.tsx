@@ -1065,14 +1065,23 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   useEffect(() => {
     if (detached) return
+    // Where the pet's sprite was on screen last time: the device grows and shrinks around it
+    // (a reply, a balloon) and the sprite must keep its place, not ride the growth.
+    let spriteTop: number | null = null
     const reclamp = (): void => {
       // Never while it is in hand: clamping a stale stored position mid-drag
       // would yank it out from under the pointer.
       if (drag.current) return
+      const el = ref.current
+      const sprite = el?.querySelector('.pet-stage') as HTMLElement | null
+      const nowTop = sprite?.getBoundingClientRect().top ?? null
+      const dy = spriteTop !== null && nowTop !== null ? nowTop - spriteTop : 0
+      spriteTop = nowTop
       const p = useSettings.getState().settings.petPos
-      if (!p) return
-      const c = clamp(p.x, p.y)
-      if (c.x !== p.x || c.y !== p.y) setSettings({ petPos: c })
+      if (!p && dy === 0) return
+      const base = p ?? { x: el?.getBoundingClientRect().left ?? 0, y: el?.getBoundingClientRect().top ?? 0 }
+      const c = clamp(base.x, base.y - dy)
+      if (!p || c.x !== p.x || c.y !== p.y) setSettings({ petPos: c })
     }
     window.addEventListener('resize', reclamp)
     // Also when the DEVICE grows (a taller screen, the buttons coming back):
