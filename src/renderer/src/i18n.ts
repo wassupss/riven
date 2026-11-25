@@ -2170,6 +2170,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.px.hint.move': { ko: '끌거나 방향키(한 칸씩)로 옮겨요. 선택 영역이 있으면 그 부분만 옮겨요.', en: 'Drag or use the arrow keys (one dot at a time) to move. With a selection, only that part moves.' },
   'pet.px.hint.select': { ko: '끌어서 영역을 잡아요. Delete로 지우면 배경을 뺄 수 있어요.', en: 'Drag to select an area. Delete clears it, which removes the background.' },
   'pet.px.clearSel': { ko: '선택 영역 지우기', en: 'Clear selection' },
+  'pet.maker.tool.move': { ko: '이동', en: 'Move' },
+  'pet.maker.moveHint': { ko: '끌어서 그림 전체를 옮겨요. 얼굴도 같이 옮겨요.', en: 'Drag to move the whole picture. The face moves with it.' },
   'pet.px.mirror': { ko: '좌우 대칭', en: 'Mirror left-right' },
   'pet.px.undo': { ko: '되돌리기', en: 'Undo' },
   'pet.px.redo': { ko: '다시 하기', en: 'Redo' },
