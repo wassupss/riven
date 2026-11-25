@@ -675,6 +675,8 @@ export default function CliChatPanel({
             getTitle={() => api.title || titleRef.current}
             onSubmit={(msg, now) => {
               atBottom.current = true
+              // A card on the screen is the CLI waiting for an answer: a message over it stops that turn first (its Esc).
+              if (model.questions.length || model.permissions.length || state.menu) window.api.cliChat.interrupt(key)
               submit(msg, now)
             }}
             onStop={stop}

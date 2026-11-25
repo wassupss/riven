@@ -66,72 +66,91 @@ export function QuestionCard({
   const qs = questionsOf(q.input)
   const [picked, setPicked] = useState<Record<number, string[]>>({})
   const [other, setOther] = useState<Record<number, string>>({})
+  // One question at a time, as the terminal asks them; the last one sends the card.
+  const [step, setStep] = useState(0)
   const boxRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
+    setStep(0)
     scrollWithin(boxRef.current)
   }, [q.id])
   const answers = questionAnswers(qs, picked, other)
+  const cur = qs[step]
+  const last = step >= qs.length - 1
+  const typed = (other[step] ?? '').trim()
+  const stepDone = !!(picked[step]?.length || typed)
   const send = (a: Record<string, string | string[]> | null): void => {
     if (a) window.api.cliChat.question(chatKey, q.id, a)
   }
-  const pick = (i: number, label: string): void => {
-    const multi = qs[i].multiSelect
-    const cur = picked[i] ?? []
-    const next = multi ? (cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]) : [label]
-    const nextPicked = { ...picked, [i]: next }
-    setPicked(nextPicked)
-    if (!multi) setOther({ ...other, [i]: '' })
-    // One single-choice question: a click is the answer.
-    if (qs.length === 1 && !multi) send(questionAnswers(qs, nextPicked, {}))
+  const next = (): void => {
+    if (last) send(answers)
+    else setStep(step + 1)
   }
+  const pick = (label: string): void => {
+    const multi = cur.multiSelect
+    const have = picked[step] ?? []
+    const list = multi ? (have.includes(label) ? have.filter((l) => l !== label) : [...have, label]) : [label]
+    const nextPicked = { ...picked, [step]: list }
+    setPicked(nextPicked)
+    if (multi) return
+    // A single choice takes its step: on to the next question, or the card's answer on the last.
+    const nextOther = { ...other, [step]: '' }
+    setOther(nextOther)
+    if (last) send(questionAnswers(qs, nextPicked, nextOther))
+    else setStep(step + 1)
+  }
+  if (!cur) return <></>
   return (
     <div className="ask-inline cli-chat-question" ref={boxRef}>
-      {qs.map((question, i) => (
-        <div key={i} className="cli-chat-q">
-          <div className="ask-inline-q">
-            {question.header && <span className="cli-chat-q-header">{question.header}</span>}
-            {question.question}
-          </div>
-          <div className="ask-inline-opts">
-            {question.options.map((o) => {
-              const on = (picked[i] ?? []).includes(o.label)
-              return (
-                <button
-                  key={o.label}
-                  className={`ask-inline-opt${on ? ' on' : ''}`}
-                  title={o.description}
-                  onClick={() => pick(i, o.label)}
-                >
-                  {question.multiSelect && <span className="cli-chat-check">{on ? '☑' : '☐'}</span>}
-                  {o.label}
-                  {o.description && <span className="cli-chat-opt-desc">{o.description}</span>}
-                </button>
-              )
-            })}
-          </div>
-          <div className="ask-inline-row">
-            <input
-              className="ask-inline-input"
-              value={other[i] ?? ''}
-              placeholder={t('ask.otherPlaceholder')}
-              onChange={(e) => {
-                setOther({ ...other, [i]: e.target.value })
-                if (!question.multiSelect) setPicked({ ...picked, [i]: [] })
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  send(answers)
-                }
-              }}
-            />
-          </div>
+      {qs.length > 1 && <div className="cli-chat-q-step">{t('ask.step', { n: step + 1, m: qs.length })}</div>}
+      <div className="cli-chat-q">
+        <div className="ask-inline-q">
+          {cur.header && <span className="cli-chat-q-header">{cur.header}</span>}
+          {cur.question}
         </div>
-      ))}
+        <div className="ask-inline-opts">
+          {cur.options.map((o) => {
+            const on = (picked[step] ?? []).includes(o.label)
+            return (
+              <button
+                key={o.label}
+                className={`ask-inline-opt${on ? ' on' : ''}`}
+                title={o.description}
+                onClick={() => pick(o.label)}
+              >
+                {cur.multiSelect && <span className="cli-chat-check">{on ? '☑' : '☐'}</span>}
+                {o.label}
+                {o.description && <span className="cli-chat-opt-desc">{o.description}</span>}
+              </button>
+            )
+          })}
+        </div>
+        <div className="ask-inline-row">
+          <input
+            className="ask-inline-input"
+            value={other[step] ?? ''}
+            placeholder={t('ask.otherPlaceholder')}
+            onChange={(e) => {
+              setOther({ ...other, [step]: e.target.value })
+              if (!cur.multiSelect) setPicked({ ...picked, [step]: [] })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && typed) {
+                e.preventDefault()
+                next()
+              }
+            }}
+          />
+        </div>
+      </div>
       <div className="ask-inline-row">
-        {(qs.length > 1 || qs.some((x) => x.multiSelect) || Object.values(other).some((v) => v.trim())) && (
-          <button className="ask-inline-send" disabled={!answers} onClick={() => send(answers)}>
-            {t('ask.send')}
+        {step > 0 && (
+          <button className="ask-inline-cancel" onClick={() => setStep(step - 1)}>
+            {t('ask.prev')}
+          </button>
+        )}
+        {(cur.multiSelect || typed) && (
+          <button className="ask-inline-send" disabled={last ? !answers : !stepDone} onClick={next}>
+            {last ? t('ask.send') : t('ask.next')}
           </button>
         )}
         <button

@@ -188,7 +188,7 @@ export const TurnView = memo(function TurnView({
                       <ChevronRight size={12} className="cli-chat-chev" />
                       {t('clichat.thinking')}
                     </summary>
-                    <div className="cli-chat-thinking-body">{b.text || t('clichat.thinkingHidden')}</div>
+                    <div className="cli-chat-thinking-body">{b.text}</div>
                   </details>
                 )
               case 'tool': {

@@ -1020,9 +1020,13 @@ pub fn interrupt(key: &str) {
   st.busy = false;
   st.shown = None;
   st.last_active = Instant::now();
-  for p in st.perms.drain(..) {
+  // The cards go with the turn: the view must hear that each one is done, or it keeps drawing it.
+  let gone = std::mem::take(&mut st.perms);
+  for p in gone {
+    emit(&st.label, json!({ "key": st.key, "kind": "permissionDone", "id": p.id, "decision": "terminal" }));
     let _ = p.tx.send(Decision::Terminal);
   }
+  st.waiting = false;
   // The preview is left for the page to draw out and clear (see 'settle').
   emit_state(&st);
 }

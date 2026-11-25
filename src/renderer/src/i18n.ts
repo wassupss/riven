@@ -870,7 +870,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'clichat.perm.terminal': { ko: '터미널에서 답하기', en: 'Answer in terminal' },
   'clichat.toolLines': { ko: '{n}줄', en: '{n} lines' },
   'clichat.thinking': { ko: '생각', en: 'Thinking' },
-  'clichat.thinkingHidden': { ko: '(내용 비공개)', en: '(content withheld)' },
   'clichat.compact': { ko: '대화 압축됨 ({trigger}, {tokens} 토큰)', en: 'Conversation compacted ({trigger}, {tokens} tokens)' },
   'clichat.usage': {
     ko: '요청 {n} · 캐시 읽기 {read} · 캐시 쓰기 {write} · 출력 {out}',
@@ -920,6 +919,9 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'port.openExternal': { ko: '외부 브라우저에서 열기', en: 'Open in system browser' },
   'ask.otherPlaceholder': { ko: '직접 입력…', en: 'Type your own answer…' },
   'ask.send': { ko: '보내기', en: 'Send' },
+  'ask.next': { ko: '다음', en: 'Next' },
+  'ask.prev': { ko: '이전', en: 'Back' },
+  'ask.step': { ko: '질문 {n} / {m}', en: 'Question {n} of {m}' },
   'ask.cancel': { ko: '취소', en: 'Dismiss' },
   'ask.expired': {
     ko: '에이전트가 더 이상 답을 기다리지 않습니다 (연결 종료됨)',
