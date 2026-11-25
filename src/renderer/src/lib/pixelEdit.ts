@@ -333,20 +333,24 @@ export function clearRect(cells: Uint8Array, w: number, r: CellRect): void {
 }
 
 /**
- * A picture's rows at a new width and height (nearest dot, each new dot takes
- * the old dot under its centre). Growing repeats dots; shrinking drops some.
- * Used when a finished picture changes its grid: its frames change the same way.
+ * A picture's rows on a new canvas of nw by nh. Every dot keeps its size and
+ * its place in the middle: a bigger canvas is air round the picture, a smaller
+ * one crops the picture's edges. Used when a finished picture changes its grid;
+ * its frames take the same canvas.
  */
-export function resampleRows(rows: string[], nw: number, nh: number): string[] {
+export function fitRows(rows: string[], nw: number, nh: number): string[] {
   const h = rows.length
   const w = rows[0]?.length ?? 0
+  const ox = Math.floor((nw - w) / 2)
+  const oy = Math.floor((nh - h) / 2)
   const out: string[] = []
   for (let y = 0; y < nh; y++) {
-    const sy = Math.min(h - 1, Math.floor(((y + 0.5) * h) / nh))
+    const sy = y - oy
     let row = ''
     for (let x = 0; x < nw; x++) {
-      const sx = Math.min(w - 1, Math.floor(((x + 0.5) * w) / nw))
-      row += rows[sy]?.[sx] ?? '.'
+      const sx = x - ox
+      const ch = sy >= 0 && sy < h && sx >= 0 && sx < w ? rows[sy][sx] : '.'
+      row += ch
     }
     out.push(row)
   }

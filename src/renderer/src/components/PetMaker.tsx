@@ -63,6 +63,7 @@ import {
   NAME_MAX,
   PHOTO,
   PHOTO_MAX_COLORS,
+  PHOTO_PICTURE_COLORS,
   PHOTO_SIZES,
   type PhotoArt,
   ROLE_COLOR,
@@ -99,7 +100,7 @@ import {
   type Crop,
   type Rgba
 } from '../lib/petPhoto'
-import { blankDoc, countDots, docOfPhoto, photoOfDoc, resampleRows, type PixelDoc } from '../lib/pixelEdit'
+import { blankDoc, countDots, docOfPhoto, fitRows, photoOfDoc, type PixelDoc } from '../lib/pixelEdit'
 import { nextName } from '../lib/petMaker'
 
 // ---------------------------------------------------------------------------
@@ -374,7 +375,7 @@ export default function PetMaker({
   const [brushSize, setBrushSize] = useState<BrushSize>('m')
   const [view, setView] = useState<View>('crop')
   const [convOpen, setConvOpen] = useState(true)
-  const [colorCount, setColorCount] = useState<number>(PHOTO_MAX_COLORS)
+  const [colorCount, setColorCount] = useState<number>(PHOTO_PICTURE_COLORS)
   // The picture's grid: more dots, more detail in the same 32 css pixels.
   const [res, setRes] = useState<PhotoDims>(editing?.photo ? photoDimsOf(editing.photo) : { w: PHOTO, h: PHOTO })
   // Bumped to remake the picture from the photo when nothing else changed ("덮어쓰기", "사진대로 되돌리기").
@@ -407,6 +408,8 @@ export default function PetMaker({
   // ---- the questions and what happened ----
   // "직접 그린 내용이 사라져요", asked in place before the picture is remade.
   const [ask, setAsk] = useState<{ run: () => void } | null>(null)
+  /** Why the last canvas change was refused (a crop that would leave a speck). */
+  const [sizeNote, setSizeNote] = useState<string | null>(null)
   const [closeAsk, setCloseAsk] = useState(false)
   // Changed since it was opened or saved.
   const [dirty, setDirty] = useState(false)
@@ -997,16 +1000,21 @@ export default function PetMaker({
     </section>
   )
 
-  // A finished picture's grid changes by resampling its dots (and its frames); no photo to remake it from.
+  // A finished picture's grid changes around its dots (they keep their size; its frames take the same canvas).
   const resizePicture = (d: PhotoDims): void => {
     const p = draft?.photo
     if (!draft || !p) return
-    const photo: PhotoArt = { palette: [...p.palette], rows: resampleRows(p.rows, d.w, d.h) }
+    const photo: PhotoArt = { palette: [...p.palette], rows: fitRows(p.rows, d.w, d.h) }
+    const n = countDots(docOfPhoto(photo).cells)
+    const min = minPhotoCells(d.w, d.h)
+    // A smaller canvas can crop the picture down to a speck: refuse that, and say why.
+    if (n < min) return setSizeNote(t('pet.px.tooSmall', { n, min }))
+    setSizeNote(null)
     const frames = framesU.value
     if (frames) {
       const resized: FrameMap = {}
       for (const [sit, set] of Object.entries(frames) as Array<[Situation, FrameSet]>)
-        resized[sit] = { fps: set.fps, frames: set.frames.map((g) => resampleRows(g, d.w, d.h)) }
+        resized[sit] = { fps: set.fps, frames: set.frames.map((g) => fitRows(g, d.w, d.h)) }
       framesU.replace(resized)
     }
     setDraft({ ...draft, photo })
@@ -1051,7 +1059,9 @@ export default function PetMaker({
   const gridSection = !blank && !source && !!draft?.photo && (
     <section className="pmk-sec">
       <h4 className="pmk-sec-title">{t('pet.maker.canvasSize')}</h4>
+      {overwriteAsk}
       {sizeRows((d) => resizePicture(d))}
+      {sizeNote && <p className="pm-error">{sizeNote}</p>}
     </section>
   )
 

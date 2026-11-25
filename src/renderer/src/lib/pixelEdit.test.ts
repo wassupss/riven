@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   HISTORY_LIMIT,
+  MAX_COLORS,
   addColor,
   blankDoc,
   clearRect,
@@ -19,7 +20,7 @@ import {
   rectCells,
   rectOf,
   redo,
-  resampleRows,
+  fitRows,
   replaceColor,
   stamp,
   stampAll,
@@ -152,7 +153,7 @@ describe('palette', () => {
     const r = addColor(['#000000'], '#FF0000')
     expect(r).toEqual({ palette: ['#000000', '#ff0000'], index: 1 })
     expect(addColor(['#000000', '#ff0000'], '#ff0000')?.index).toBe(1)
-    const full = Array.from({ length: 16 }, (_, i) => `#0000${i.toString(16).padStart(2, '0')}`)
+    const full = Array.from({ length: MAX_COLORS }, (_, i) => `#0000${i.toString(16).padStart(2, '0')}`)
     expect(addColor(full, '#123456')).toBeNull()
     expect(addColor(full, '#00000f')?.index).toBe(15)
   })
@@ -297,10 +298,11 @@ describe('moving and clearing a part of the picture', () => {
 
 describe('changing a finished picture grid', () => {
   it('grows by repeating dots and shrinks by dropping them', () => {
-    expect(resampleRows(['01', '23'], 4, 2)).toEqual(['0011', '2233'])
-    expect(resampleRows(['0011', '2233'], 2, 2)).toEqual(['01', '23'])
+    expect(fitRows(['01', '23'], 4, 4)).toEqual(['....', '.01.', '.23.', '....'])
+    expect(fitRows(['0011', '2233', '4455', '6677'], 2, 2)).toEqual(['23', '45'])
   })
   it('takes a new width and height on their own (a tall picture from a square one)', () => {
-    expect(resampleRows(['01', '23'], 2, 4)).toEqual(['01', '01', '23', '23'])
+    expect(fitRows(['01', '23'], 2, 2)).toEqual(['01', '23'])
+    expect(fitRows(['0'], 2, 2)).toEqual(['0.', '..'])
   })
 })

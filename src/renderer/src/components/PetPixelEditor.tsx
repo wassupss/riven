@@ -653,7 +653,8 @@ export default function PetPixelEditor({
         </div>
 
         <div ref={stageRef} className="pmk-stage">
-          <div className={`pmx-view${zoom !== '1' ? ' zoomed' : ''}`} style={{ width: fit, height: fit }}>
+          {/* At fit the frame is the picture's own shape (a wide grid is a wide frame); zoomed, it stays a fit box and scrolls. */}
+          <div className={`pmx-view${zoom !== '1' ? ' zoomed' : ''}`} style={zoom === '1' ? { width: cssW, height: cssH } : { width: fit, height: fit }}>
             <canvas
               ref={canvasRef}
               className={`pmx-canvas tool-${tool}`}

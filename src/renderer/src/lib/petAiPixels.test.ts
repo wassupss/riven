@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { extractJson, normalizeHex, scaleFor, usageTokens } from './petAi'
 import { buildPixelPrompt, gridRows, parsePixelAnswer, rgbaOfDoc } from './petAiPixels'
 import { BLOB, HAIKU_PIXEL_ANSWER } from './petAi.fixtures'
-import type { PixelDoc } from './pixelEdit'
+import { MAX_COLORS, type PixelDoc } from './pixelEdit'
+import { PHOTO_CHARS } from './petPhotoGrid'
 
 const blob = (): PixelDoc => ({ w: BLOB.n, h: BLOB.n, cells: Uint8Array.from(BLOB.cells), palette: [...BLOB.palette] })
 
@@ -46,7 +47,7 @@ describe('the prompt', () => {
     expect(p.startsWith('Request: 머리에 빨간 모자\n')).toBe(true)
     expect(p).toContain('32x32 dots')
     expect(p).toContain('0 #222034\n1 #f0a040\n2 #000000')
-    expect(p).toContain('At most 16 colours')
+    expect(p).toContain(`At most ${MAX_COLORS} colours`)
     expect(p).toContain('each dot drawn as a 16x16 square')
     expect(p).not.toContain('the photo')
     const rows = gridRows(d)
@@ -92,16 +93,16 @@ describe('checking the answer', () => {
     expect(parsePixelAnswer(answer(['....', '....', '....', '....'], { 0: '#112233' }), tiny())).toMatchObject({ reason: 'pet.ai.err.empty' })
     expect(parsePixelAnswer('I added a hat!', tiny())).toMatchObject({ reason: 'pet.ai.err.json' })
   })
-  it('refuses more than 16 colours in use, but not unused extras', () => {
-    const n = 17
+  it('refuses more colours in use than MAX_COLORS, but not unused extras', () => {
+    const n = MAX_COLORS + 1
     const cells = new Uint8Array(n * n)
     const doc: PixelDoc = { w: n, h: n, cells, palette: ['#000000'] }
-    const keys = 'ABCDEFGHIJKLMNOPQ'
-    const pal = Object.fromEntries([...keys].map((k, i) => [k, `#0000${(i + 16).toString(16)}`]))
+    const keys = PHOTO_CHARS.slice(0, n)
+    const pal = Object.fromEntries([...keys].map((k, i) => [k, `#0000${i.toString(16).padStart(2, '0')}`]))
     const grid = Array.from({ length: n }, (_, y) => keys[y] + '.'.repeat(n - 1))
-    expect(parsePixelAnswer(answer(grid, pal), doc)).toEqual({ ok: false, reason: 'pet.ai.err.colors', vars: { n: 17, max: 16 } })
-    const grid16 = grid.map((r, y) => (y === 16 ? '.'.repeat(n) : r))
-    expect(parsePixelAnswer(answer(grid16, pal), doc).ok).toBe(true)
+    expect(parsePixelAnswer(answer(grid, pal), doc)).toEqual({ ok: false, reason: 'pet.ai.err.colors', vars: { n, max: MAX_COLORS } })
+    const gridMax = grid.map((r, y) => (y === MAX_COLORS ? '.'.repeat(n) : r))
+    expect(parsePixelAnswer(answer(gridMax, pal), doc).ok).toBe(true)
   })
   it("refuses the real Haiku answer: its 10th row is 33 dots", () => {
     expect(parsePixelAnswer(HAIKU_PIXEL_ANSWER, blob())).toEqual({ ok: false, reason: 'pet.ai.err.cols', vars: { row: 10, n: 32, got: 33 } })

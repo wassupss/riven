@@ -7,18 +7,26 @@ export const PHOTO = 32
 /**
  * The grids a picture can be made at. The pet is always drawn 32 css pixels
  * square, so 48 is 2/3 of a css pixel a dot and 64 half of one (a device
- * pixel each on a Retina screen): more detail in the same room.
+ * pixel each on a Retina screen): more detail in the same room. 96 and 128
+ * are for a picture drawn bigger than the pet is shown, and are scaled down
+ * to it like the others.
  */
-export const PHOTO_SIZES = [32, 48, 64] as const
+export const PHOTO_SIZES = [32, 48, 64, 96, 128] as const
 export type PhotoSize = (typeof PHOTO_SIZES)[number]
-export const PHOTO_MAX_COLORS = 16
+/**
+ * Colours a picture may use: one drawn letter each (petCustomArt PHOTO_DOT,
+ * A..Z), so 26. Pictures saved with 16 or fewer read the same.
+ */
+export const PHOTO_MAX_COLORS = 26
+/** Colours a photo is worked down to by default (the maker's 8, 12 or 16 choice). */
+export const PHOTO_PICTURE_COLORS = 16
 /** A dot of the picture: '.' is air, otherwise the index of its colour in `palette`. */
-export const PHOTO_CHARS = '0123456789abcdef'
+export const PHOTO_CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
 /** A 32x32 picture with fewer dots than this is a speck (a bigger grid scales it by area). */
 export const MIN_PHOTO_CELLS = 60
 
 export interface PhotoArt {
-  /** Up to 16 '#rrggbb' colours. */
+  /** Up to PHOTO_MAX_COLORS '#rrggbb' colours. */
   palette: string[]
   /**
    * `h` rows of `w` characters: '.' or a PHOTO_CHARS index into `palette`.
@@ -26,7 +34,7 @@ export interface PhotoArt {
    */
   rows: string[]
   /**
-   * A square grid of 48 or 64, kept for the riven that reads it. Left out at
+   * A square grid of 48 to 128, kept for the riven that reads it. Left out at
    * 32, and on every picture that is not square (its rows say its size).
    */
   size?: PhotoSize

@@ -267,7 +267,7 @@ describe('sanitizePhoto', () => {
 
   it.each([
     ['no palette', { ...ok, palette: [] }],
-    ['17 colours', { ...ok, palette: Array(17).fill('#000000') }],
+    ['27 colours', { ...ok, palette: Array(27).fill('#000000') }],
     ['a bad colour', { ...ok, palette: ['#12345', '#445566'] }],
     ['31 rows', { ...ok, rows: ok.rows.slice(1) }],
     ['a short row', { ...ok, rows: [...ok.rows.slice(0, 10), '...', ...ok.rows.slice(11)] }],
@@ -480,6 +480,13 @@ describe('a faithful picture at 32, 48 and 64', () => {
       expect(photoDimsOf(tall!)).toEqual({ w: 32, h: 64 })
     })
 
+    it('a square 128 is a valid picture, and its size field says 128', () => {
+      const sq128 = sanitizePhoto(square(128))
+      expect(sq128).not.toBeNull()
+      expect(sq128!.size).toBe(128)
+      expect(photoDimsOf(sq128!)).toEqual({ w: 128, h: 128 })
+    })
+
     it('an old 32 picture (no size) comes back exactly as it was; a 32 that says so is the same picture', () => {
       const old = square(32) as PhotoArt
       expect(sanitizePhoto(old)).toEqual(old)
@@ -494,7 +501,7 @@ describe('a faithful picture at 32, 48 and 64', () => {
       ['48 with 32 rows', square(32, 48)],
       ['64 with 48 rows', square(48, 64)],
       ['64 with a short row', { ...(square(64, 64) as PhotoArt), rows: [...(square(64, 64) as PhotoArt).rows.slice(0, 63), '.'.repeat(48)] }],
-      ['64 with 17 colours', { ...(square(64, 64) as PhotoArt), palette: Array(17).fill('#000000') }],
+      ['64 with 27 colours', { ...(square(64, 64) as PhotoArt), palette: Array(27).fill('#000000') }],
       ['a speck at 64', { palette: ['#000000'], rows: Array.from({ length: 64 }, (_, y) => (y === 9 ? '0'.repeat(minPhotoCells(64) - 1).padEnd(64, '.') : '.'.repeat(64))), size: 64 }]
     ])('rejects %s', (_, raw) => {
       expect(sanitizePhoto(raw)).toBeNull()

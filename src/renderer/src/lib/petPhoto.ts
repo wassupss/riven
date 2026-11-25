@@ -4,6 +4,7 @@ import {
   PHOTO,
   PHOTO_CHARS,
   PHOTO_MAX_COLORS,
+  PHOTO_PICTURE_COLORS,
   labOf,
   minPhotoCells,
   photoDimsOf,
@@ -706,7 +707,7 @@ export function quantizeLab(labs: Float32Array, k: number, rounds = 6): { center
  * subject; the dots' colours are then reduced to `colors` in Lab. One piece
  * (corners count), no holes. Null when too little is left.
  */
-export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_MAX_COLORS, dims: PhotoDims = { w: PHOTO, h: PHOTO }): PhotoArt | null {
+export function photoArtOf(img: Rgba, fg: Uint8Array, colors = PHOTO_PICTURE_COLORS, dims: PhotoDims = { w: PHOTO, h: PHOTO }): PhotoArt | null {
   // The subject is square and stands in the shorter side of the grid; the air
   // left over is across (centred) or above (the subject stands on the bottom).
   const W = dims.w
@@ -826,7 +827,7 @@ export function faithfulDesignFromPhoto(
   img: Rgba,
   fg: Uint8Array,
   name: string,
-  colors = PHOTO_MAX_COLORS,
+  colors = PHOTO_PICTURE_COLORS,
   dims: PhotoDims = { w: PHOTO, h: PHOTO }
 ): CustomDesign | null {
   const base = designFromPhoto(img, fg, name)

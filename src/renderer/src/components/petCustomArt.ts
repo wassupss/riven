@@ -177,7 +177,7 @@ export function customBody(d: CustomDesign): Sprite {
 // ---------------------------------------------------------------------------
 
 /** The drawn characters of the picture's colours: palette index i is PHOTO_DOT[i]. Never a palette letter. */
-export const PHOTO_DOT = 'ABCDEFGHIJKLMNOP'
+export const PHOTO_DOT = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 const photoCache = new WeakMap<CustomDesign, string[]>()
 
