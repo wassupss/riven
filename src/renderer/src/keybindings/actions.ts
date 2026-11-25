@@ -5,8 +5,7 @@ import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
 import { usePet } from '../state/pet'
 import { isAssistant } from '../lib/petAssistant'
-import { openPetChat } from '../state/petAssistants'
-import { assistantOpen, closeAssistant } from '../dock/registry'
+import { requestAssistantChat } from '../lib/petAssistBus'
 import { contextBus } from '../bridge/contextBus'
 import {
   addTerminal,
@@ -63,9 +62,8 @@ export function registerDefaultActions(): void {
     run: () => {
       const pet = usePet.getState().pet
       if (!pet || !isAssistant(pet.assistant)) return
-      // Again while it is open: closes it.
-      if (assistantOpen(pet.bornAt)) closeAssistant(pet.bornAt)
-      else openPetChat(pet.bornAt)
+      // Toggles it wherever the pet is; the window that hosts the pet answers.
+      requestAssistantChat(pet.bornAt)
     }
   })
 

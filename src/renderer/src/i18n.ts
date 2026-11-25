@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useSettings, getSettings } from './state/settings'
 
 // ---------------------------------------------------------------------------
@@ -667,7 +668,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'settings.notifyDesc': { ko: '백그라운드에서 턴이 끝나면 알림', en: 'Notify when a background turn finishes' },
   'settings.crashDesc': { ko: '익명 크래시 리포트 전송', en: 'Send anonymous crash reports' },
-  'settings.agentChatUIDesc': { ko: 'AI 에이전트를 터미널 CLI 대신 네이티브 챗으로 실행', en: 'Run agents in the native chat instead of a terminal CLI' },
   'settings.cliSection': { ko: '감지된 CLI', en: 'Detected CLIs' },
   'settings.cliDetecting': { ko: 'CLI 감지 중…', en: 'Detecting CLIs…' },
   'settings.cliNone': { ko: 'PATH에서 AI CLI를 찾지 못했습니다 (claude, codex).', en: 'No AI CLI found on PATH (claude, codex).' },
@@ -716,10 +716,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.wordWrap': { ko: '자동 줄바꿈', en: 'Word wrap' },
   'settings.minimap': { ko: '미니맵', en: 'Minimap' },
   'settings.ligatures': { ko: '글꼴 합자(ligature)', en: 'Font ligatures' },
-  'settings.agentChatUI': {
-    ko: 'AI 에이전트를 네이티브 챗으로 실행 (끄면 터미널 CLI)',
-    en: 'Run AI agents in the native chat (off = terminal CLI)'
-  },
   'settings.terminalProfiles': { ko: '터미널 프로파일', en: 'Terminal profiles' },
   'settings.terminalProfilesHint': {
     ko: '패널 메뉴에서 새 터미널로 실행할 명령 프리셋입니다.',
@@ -2421,6 +2417,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.assist.stop': { ko: '중단', en: 'Stop' },
   'pet.assist.resting': { ko: '쉬는 중 (다음 부탁에 깨어나요)', en: 'resting (wakes on the next ask)' },
   'pet.assist.open': { ko: '대화 열기', en: 'Open conversation' },
+  'pet.assist.history': { ko: '대화 기록', en: 'Conversation history' },
+  'pet.assist.newChat': { ko: '새 대화', en: 'New conversation' },
+  'pet.assist.current': { ko: '지금 대화', en: 'Current' },
+  'pet.assist.untitled': { ko: '제목 없는 대화', en: 'Untitled conversation' },
+  'pet.assist.historyEmpty': { ko: '아직 지난 대화가 없어요', en: 'No earlier conversations yet' },
   'pet.assist.parkedNote': {
     ko: '지금은 쉬는 중이에요. 메시지를 보내면 이 대화를 이어서 시작해요.',
     en: 'Resting now. Send a message to carry on this conversation.'
@@ -2800,9 +2801,11 @@ function translate(lang: Lang, key: string, arg1?: string | Params, arg2?: Param
 export type TFn = (key: string, arg1?: string | Params, arg2?: Params) => string
 
 // Reactive hook — re-renders the caller when the language setting changes.
+// Stable while the language is: effects that list `t` as a dependency must not re-run on
+// every render (the pet's break timer set state each run, so a fresh `t` looped forever).
 export function useT(): TFn {
   const lang = useSettings((s) => s.settings.language)
-  return (key, arg1, arg2) => translate(lang, key, arg1, arg2)
+  return useMemo(() => (key, arg1, arg2) => translate(lang, key, arg1, arg2), [lang])
 }
 
 // Non-reactive translate for imperative code (confirm/alert/notifications).

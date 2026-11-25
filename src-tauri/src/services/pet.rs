@@ -158,10 +158,16 @@ fn read_bounds() -> Option<(f64, f64)> {
   Some((v.get("x")?.as_f64()?, v.get("y")?.as_f64()?))
 }
 
+/// The room the assistant card has taken around the pet: (width on the left, height
+/// added at the top), both 0 while it is closed. The saved position is the pet's own
+/// (without the room), so a restart does not shift it.
+static ROOM: Mutex<(f64, f64)> = Mutex::new((0.0, 0.0));
+
 fn save_position() {
   let Some(b) = win().and_then(|w| bounds(&w)) else { return };
+  let (rw, rh) = *ROOM.lock().unwrap();
   // getPosition() is whole DIP.
-  let v = json!({ "x": js_round(b.x) as i64, "y": js_round(b.y) as i64 });
+  let v = json!({ "x": js_round(b.x + rw) as i64, "y": js_round(b.y + rh) as i64 });
   std::thread::spawn(move || {
     let _ = super::atomic::write_blocking(&super::paths::user_file(BOUNDS_FILE), &super::atomic::json_pretty(&v));
   });
@@ -254,6 +260,26 @@ pub fn dock() {
 
 pub fn is_open() -> bool {
   win().is_some()
+}
+
+/// pet:room: the assistant card opens beside the pet. The window grows to the left
+/// by `width` and up to at least `height`, keeping the pet where it is (right edge
+/// and bottom edge stay put); closing gives that room back. Idempotent.
+pub fn room(open: bool, width: f64, height: f64) {
+  let Some(w) = win() else { return };
+  let Some(b) = bounds(&w) else { return };
+  // The lock is not held while the window moves: its Moved event saves the position
+  // (save_position reads ROOM).
+  let (cw, ch) = *ROOM.lock().unwrap();
+  let (nw, nh) = if open && width > 0.0 { (width, (height - (b.h - ch)).max(0.0)) } else { (0.0, 0.0) };
+  if (nw, nh) == (cw, ch) {
+    return;
+  }
+  *ROOM.lock().unwrap() = (nw, nh);
+  // Base frame (the pet's own): the window minus the room it had.
+  let (bx, by) = (b.x + cw, b.y + ch);
+  let _ = w.set_position(LogicalPosition::new(bx - nw, by - nh));
+  let _ = w.set_size(LogicalSize::new(b.w - cw + nw, b.h - ch + nh));
 }
 
 pub fn resize(height: f64, width: Option<f64>) {

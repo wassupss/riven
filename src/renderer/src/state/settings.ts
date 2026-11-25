@@ -71,10 +71,6 @@ export interface Settings {
   terminalProfiles: Array<{ name: string; command: string }>
   // Editor snippets: typing `prefix` offers `body` (supports ${1} tab stops).
   snippets: Array<{ prefix: string; body: string }>
-  // Launch AI agents in the native chat panel (streaming UI) instead of a raw CLI
-  // terminal. Only Claude has a native chat driver so far; others fall back to a
-  // terminal regardless.
-  agentChatUI: boolean
   // A fixed instruction appended to every agent chat (like CLAUDE.md but app-wide).
   // Mirrors native's `prompt.global`.
   globalPrompt: string
@@ -178,7 +174,6 @@ export const DEFAULT_SETTINGS: Settings = {
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
-  agentChatUI: true,
   globalPrompt: '',
   mcpDisabledTools: [],
   browserSearch: 'https://www.google.com/search?q={q}',

@@ -94,6 +94,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     desk::pet_drag_move,
     desk::pet_drag_end,
     desk::pet_window_box,
+    desk::pet_room,
     desk::pet_set_break,
     desk::pet_set_on_top,
     desk::pet_ask_on_top,

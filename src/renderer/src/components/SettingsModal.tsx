@@ -724,12 +724,6 @@ export default function SettingsModal(): JSX.Element | null {
               <>
                 <div className="section-label">{t('settings.ai.agentSection')}</div>
                 <ToggleRow
-                  title={t('settings.agentChatUI')}
-                  desc={t('settings.agentChatUIDesc')}
-                  checked={settings.agentChatUI}
-                  onChange={(v) => upd('agentChatUI', v)}
-                />
-                <ToggleRow
                   title={t('settings.chatSuggest')}
                   desc={t('settings.chatSuggestDesc')}
                   checked={settings.chatSuggest}

@@ -11,7 +11,6 @@ import ExplorerPanel from './panels/ExplorerPanel'
 import SearchPanel from './panels/SearchPanel'
 import GitPanel from './panels/GitPanel'
 import NotesPanel from './panels/NotesPanel'
-import AssistantPanel from './panels/AssistantPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
 import DbPanel from './panels/DbPanel'
 import { dropCliChat } from '../state/cliChats'
@@ -181,8 +180,6 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
         boxed('preview', props, <PreviewPanel workspace={workspace} api={props.api} />),
       search: (props: IDockviewPanelProps) => boxed('search', props, <SearchPanel workspace={workspace} />),
       git: (props: IDockviewPanelProps) => boxed('git', props, <GitPanel workspace={workspace} />),
-      assistant: (props: IDockviewPanelProps) =>
-        boxed('assistant', props, <AssistantPanel bornAt={Number(props.params.bornAt)} />),
       notes: (props: IDockviewPanelProps) => boxed('notes', props, <NotesPanel workspace={workspace} />),
       api: (props: IDockviewPanelProps) => boxed('api', props, <ApiClientPanel />),
       db: (props: IDockviewPanelProps) => boxed('db', props, <DbPanel />),

@@ -2,8 +2,7 @@ import { useEffect } from 'react'
 import { useSettings } from '../state/settings'
 import { useUI, type SettingsTab } from '../state/ui'
 import PetDevice from './PetDevice'
-import { addAssistant } from '../dock/registry'
-import { closePetChat, usePetChat } from '../state/petAssistants'
+import { AssistantCard } from './PetChatDialog'
 
 // ---------------------------------------------------------------------------
 // Decides WHERE 리븐펫 lives, so only one of the two ever runs.
@@ -24,18 +23,6 @@ export default function PetHost(): JSX.Element | null {
   const breakMin = useSettings((s) => s.settings.petBreakMin)
   const ready = useSettings((s) => s.ready)
   const set = useSettings((s) => s.set)
-
-  // A pet's conversation (its 비서 대화, or the D key) opens as a panel in riven's window.
-  useEffect(
-    () =>
-      usePetChat.subscribe((s, prev) => {
-        if (s.open !== null && s.open !== prev.open) {
-          addAssistant(s.open)
-          closePetChat()
-        }
-      }),
-    []
-  )
 
   useEffect(() => {
     // Wait for settings to load, or the defaults would close a window the user
@@ -90,6 +77,7 @@ export default function PetHost(): JSX.Element | null {
   return (
     <>
       {!detached && <PetDevice />}
+      {!detached && show && <AssistantCard anchor="attached" />}
       {/* A pet assistant's whole conversation (펫 비서), wherever the pet lives. */}
     </>
   )

@@ -17,6 +17,7 @@ import {
 } from '../lib/cliChatLive'
 import {
   actingWorkspace,
+  MAX_PAST_CHATS,
   bornAtOfKey,
   isAssistant,
   launchChange,
@@ -25,9 +26,21 @@ import {
   resolveScope,
   sanitizeSessions,
   type Launch,
+  type PastChat,
+  type SavedSession,
   type SavedSessions
 } from '../lib/petAssistant'
-import { postToPets, serveAssistants, type AssistCard, type AssistPet, type AssistStatus } from '../lib/petAssistBus'
+import {
+  askAssistant,
+  newAssistantChat,
+  postToPets,
+  resumeAssistantChat,
+  serveAssistants,
+  viewAssistant,
+  type AssistCard,
+  type AssistPet,
+  type AssistStatus
+} from '../lib/petAssistBus'
 import { onNest } from '../lib/petCommand'
 import { briefOf, normalizeNest, petTitle, speciesName, turnFood, type NestBrief, type PetBrief, type UsageRecord } from './pet'
 import { setPetScope } from './petAssistScope'
@@ -90,6 +103,8 @@ interface Run {
 
 const runs = new Map<number, Run>()
 let saved: SavedSessions | null = null
+/** This window runs the pets' sessions (startPetAssistants elected it); else it asks. */
+let hosting = false
 let lastNest: NestBrief | null = null
 /** Which pets were assistants in the last nest heard (birthday -> on). */
 let lastOn: Map<number, boolean> | null = null
@@ -144,11 +159,39 @@ function writeSaved(): void {
   if (saved) void window.api.config.save(FILE, { version: 1, pets: saved })
 }
 
+/** The current conversation of a saved entry, set aside into its history (newest first). */
+function setAside(e: SavedSession | undefined): PastChat[] {
+  const past = e?.past ?? []
+  if (!e?.sessionId || !e.cwd) return past
+  const now: PastChat = { sessionId: e.sessionId, cwd: e.cwd, title: e.title ?? '', at: e.at ?? Date.now() }
+  return [now, ...past.filter((p) => p.sessionId !== e.sessionId)].slice(0, MAX_PAST_CHATS)
+}
+
 function remember(bornAt: number, sessionId: string, cwd: string): void {
   if (!saved) return
   const k = String(bornAt)
-  if (saved[k]?.sessionId === sessionId && saved[k]?.cwd === cwd) return
-  saved[k] = { sessionId, cwd }
+  const cur = saved[k]
+  if (cur?.sessionId === sessionId && cur.cwd === cwd) return
+  // The same conversation, moved to another folder, keeps its title; a new one sets the
+  // current one aside.
+  const same = cur?.sessionId === sessionId
+  const past = same ? (cur?.past ?? []) : setAside(cur)
+  saved[k] = {
+    sessionId,
+    cwd,
+    at: Date.now(),
+    ...(same && cur?.title ? { title: cur.title } : {}),
+    ...(past.length ? { past } : {})
+  }
+  writeSaved()
+}
+
+/** A message went to the current conversation: it is the latest, and titled by it if it has no title yet. */
+function noteTurn(bornAt: number, text: string): void {
+  const e = saved?.[String(bornAt)]
+  if (!saved || !e?.sessionId) return
+  e.at = Date.now()
+  if (!e.title) e.title = text.replace(/\s+/g, ' ').trim().slice(0, 60)
   writeSaved()
 }
 
@@ -244,7 +287,7 @@ function runFor(pet: AssistPet): Run {
 async function launch(run: Run, parked: boolean): Promise<boolean> {
   const want = launchFor(run.pet, await homeDir())
   const s = (await loadSaved())[String(run.bornAt)]
-  const resume = s && s.cwd === want.cwd ? s.sessionId : undefined
+  const resume = s?.sessionId && s.cwd === want.cwd ? s.sessionId : undefined
   if (parked && !resume) return false
   try {
     const r = await window.api.cliChat.restart(run.key, startOpts(run.pet, want, resume, parked))
@@ -285,6 +328,7 @@ export async function askPet(pet: AssistPet, text: string): Promise<void> {
     }
   }
   if (!(await ensure(run, false))) return
+  noteTurn(run.bornAt, msg)
   window.api.cliChat.send(run.key, msg)
 }
 
@@ -317,6 +361,11 @@ function stopRun(run: Run, forget: boolean): void {
 
 /** Show the conversation: the session if Rust has it, else the saved one loaded without a process. */
 export async function viewPetChat(bornAt: number): Promise<string | null> {
+  // A pet window shows the conversation the host runs: it asks the host to attach it.
+  if (!hosting) {
+    viewAssistant(bornAt)
+    return petChatKey(bornAt)
+  }
   const pet = runs.get(Math.floor(bornAt))?.pet ?? (await assistantPet(bornAt))
   if (!pet) return null
   const run = runFor(pet)
@@ -334,7 +383,78 @@ export async function viewPetChat(bornAt: number): Promise<string | null> {
 /** The dialog's composer: the same path as talking to the pet. */
 export async function sendFromChat(bornAt: number, text: string): Promise<void> {
   const pet = runs.get(Math.floor(bornAt))?.pet ?? (await assistantPet(bornAt))
-  if (pet) await askPet(pet, text)
+  if (!pet) return
+  // Only the host runs sessions: from a pet window the question goes to it.
+  if (hosting) await askPet(pet, text)
+  else askAssistant(pet, text)
+}
+
+// ---- the history --------------------------------------------------------------------
+
+/** One conversation a pet has: the current one (if any) first, then those set aside. */
+export interface PetChatItem {
+  sessionId: string
+  cwd: string
+  title: string
+  at: number
+  current: boolean
+}
+
+/** A pet's conversations, read from the saved file (any window may read it). */
+export async function listPetChats(bornAt: number): Promise<PetChatItem[]> {
+  const all = sanitizeSessions(await window.api.config.load(FILE).catch(() => null))
+  const e = all[String(Math.floor(bornAt))]
+  if (!e) return []
+  const out: PetChatItem[] = []
+  if (e.sessionId && e.cwd) out.push({ sessionId: e.sessionId, cwd: e.cwd, title: e.title ?? '', at: e.at ?? 0, current: true })
+  for (const p of e.past ?? []) out.push({ ...p, current: false })
+  return out
+}
+
+/** Start a new conversation: the current one is set aside in the history. Host only. */
+async function newConversation(bornAt: number): Promise<void> {
+  const k = String(Math.floor(bornAt))
+  const all = await loadSaved()
+  const past = setAside(all[k])
+  if (past.length) all[k] = { past }
+  else delete all[k]
+  writeSaved()
+  const run = runs.get(Math.floor(bornAt))
+  if (run) stopRun(run, false)
+  await viewPetChat(bornAt)
+}
+
+/** Pick a set-aside conversation up again (the current one is set aside). Host only. */
+async function resumeConversation(bornAt: number, sessionId: string): Promise<void> {
+  const k = String(Math.floor(bornAt))
+  const all = await loadSaved()
+  const e = all[k]
+  const target = e?.past?.find((p) => p.sessionId === sessionId)
+  if (!e || !target) return
+  const past = setAside(e).filter((p) => p.sessionId !== sessionId)
+  all[k] = {
+    sessionId: target.sessionId,
+    cwd: target.cwd,
+    title: target.title,
+    at: target.at,
+    ...(past.length ? { past } : {})
+  }
+  writeSaved()
+  const run = runs.get(Math.floor(bornAt))
+  if (run) stopRun(run, false)
+  await viewPetChat(bornAt)
+}
+
+/** Start a new conversation, from the host or from a pet window (which asks the host). */
+export function newPetChat(bornAt: number): void {
+  if (hosting) void newConversation(bornAt)
+  else newAssistantChat(bornAt)
+}
+
+/** Pick a set-aside conversation up again, from the host or from a pet window. */
+export function resumePetChat(bornAt: number, sessionId: string): void {
+  if (hosting) void resumeConversation(bornAt, sessionId)
+  else resumeAssistantChat(bornAt, sessionId)
 }
 
 // ---- what the pet sees --------------------------------------------------------------
@@ -557,6 +677,15 @@ function onPet(m: Parameters<Parameters<typeof serveAssistants>[0]>[0]): void {
     case 'ask':
       void askPet(m.pet, m.text)
       break
+    case 'view':
+      void viewPetChat(m.bornAt)
+      break
+    case 'newChat':
+      void newConversation(m.bornAt)
+      break
+    case 'resumeChat':
+      void resumeConversation(m.bornAt, m.sessionId)
+      break
     case 'choose': {
       const run = runs.get(Math.floor(m.bornAt))
       const c = run?.cards.get(m.card)
@@ -593,12 +722,14 @@ export function startPetAssistants(): () => void {
   let stopped = false
   let release: (() => void) | null = null
   const serve = (): void => {
+    hosting = true
     const offEvents = window.api.cliChat.onEvent((e) => {
       if (bornAtOfKey(e.key) !== null) onEvent(e as unknown as CliEvent)
     })
     const offPets = serveAssistants(onPet)
     const offNest = onNest(onNestBrief)
     off = () => {
+      hosting = false
       offEvents()
       offPets()
       offNest()
