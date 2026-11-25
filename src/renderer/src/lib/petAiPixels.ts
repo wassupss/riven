@@ -20,10 +20,10 @@ export const PIXEL_SYSTEM = [
 /** The picture's rows, one character per dot: '.' for none, else its palette slot (0-9, a-f). */
 export function gridRows(doc: PixelDoc): string[] {
   const rows: string[] = []
-  for (let y = 0; y < doc.n; y++) {
+  for (let y = 0; y < doc.h; y++) {
     let row = ''
-    for (let x = 0; x < doc.n; x++) {
-      const v = doc.cells[y * doc.n + x]
+    for (let x = 0; x < doc.w; x++) {
+      const v = doc.cells[y * doc.w + x]
       row += v ? PHOTO_CHARS[v - 1] : '.'
     }
     rows.push(row)
@@ -33,14 +33,14 @@ export function gridRows(doc: PixelDoc): string[] {
 
 /** The user's request and the picture, as the model reads it. */
 export function buildPixelPrompt(doc: PixelDoc, request: string, opts: { scale: number; photo: boolean }): string {
-  const n = doc.n
+  const { w, h } = doc
   const palette = doc.palette.map((hex, i) => `${PHOTO_CHARS[i]} ${hex}`).join('\n')
   const images = [`1. the current picture, each dot drawn as a ${opts.scale}x${opts.scale} square`]
   if (opts.photo) images.push('2. the photo the picture was made from (for reference only)')
   return [
     `Request: ${request.trim()}`,
     '',
-    `The picture is ${n}x${n} dots: ${n} rows of ${n} characters, one character per dot.`,
+    `The picture is ${w}x${h} dots: ${h} rows of ${w} characters, one character per dot.`,
     `'.' is transparent (no dot). Any other character is a key of the palette.`,
     '',
     'Palette (character, colour):',
@@ -50,7 +50,7 @@ export function buildPixelPrompt(doc: PixelDoc, request: string, opts: { scale: 
     ...images,
     '',
     'Rules:',
-    `- Keep the size: exactly ${n} rows, each exactly ${n} characters.`,
+    `- Keep the size: exactly ${h} rows, each exactly ${w} characters.`,
     `- At most ${MAX_COLORS} colours. Colours are "#rrggbb".`,
     "- Palette keys are single characters (use 0-9 and a-f); '.' is never a key.",
     '- Every character in the grid is \'.\' or a key of your palette.',
@@ -61,7 +61,7 @@ export function buildPixelPrompt(doc: PixelDoc, request: string, opts: { scale: 
     'Current grid:',
     ...gridRows(doc),
     '',
-    `Answer with only: {"grid": ["<row 1>", ..., "<row ${n}>"], "palette": {"0": "#rrggbb", ...}}`
+    `Answer with only: {"grid": ["<row 1>", ..., "<row ${h}>"], "palette": {"0": "#rrggbb", ...}}`
   ].join('\n')
 }
 
@@ -85,7 +85,7 @@ export function parsePixelAnswer(text: string, current: PixelDoc): PixelAnswer {
 
 /** parsePixelAnswer on an answer already parsed (one frame of several, say). */
 export function parsePixelObject(raw: unknown, current: PixelDoc): PixelAnswer {
-  const n = current.n
+  const { w, h } = current
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('pet.ai.err.json')
   const j = raw as { grid?: unknown; palette?: unknown }
   // The palette: {char: hex}, or a list (slots 0-9, a-f).
@@ -106,12 +106,12 @@ export function parsePixelObject(raw: unknown, current: PixelDoc): PixelAnswer {
   if (typeof rows === 'string') rows = rows.split(/\r?\n/).filter((r) => r.length)
   if (!Array.isArray(rows) || !rows.every((r) => typeof r === 'string')) return fail('pet.ai.err.grid')
   const lines = rows as string[]
-  if (lines.length !== n) return fail('pet.ai.err.rows', { n, got: lines.length })
+  if (lines.length !== h) return fail('pet.ai.err.rows', { n: h, got: lines.length })
   const chars = lines.map((r) => [...r])
-  for (let y = 0; y < n; y++) if (chars[y].length !== n) return fail('pet.ai.err.cols', { row: y + 1, n, got: chars[y].length })
+  for (let y = 0; y < h; y++) if (chars[y].length !== w) return fail('pet.ai.err.cols', { row: y + 1, n: w, got: chars[y].length })
   // Which colours the dots use.
   const used = new Set<string>()
-  for (let y = 0; y < n; y++)
+  for (let y = 0; y < h; y++)
     for (const ch of chars[y]) {
       if (ch === '.') continue
       const hex = colour.get(ch)
@@ -122,26 +122,26 @@ export function parsePixelObject(raw: unknown, current: PixelDoc): PixelAnswer {
   if (used.size > MAX_COLORS) return fail('pet.ai.err.colors', { n: used.size, max: MAX_COLORS })
   const palette = [...current.palette.filter((h) => used.has(h)), ...[...used].filter((h) => !current.palette.includes(h))]
   const slot = new Map(palette.map((h, i) => [h, i + 1]))
-  const cells = new Uint8Array(n * n)
+  const cells = new Uint8Array(w * h)
   let changed = 0
-  for (let y = 0; y < n; y++)
-    for (let x = 0; x < n; x++) {
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
       const ch = chars[y][x]
       const v = ch === '.' ? 0 : slot.get(colour.get(ch)!)!
-      cells[y * n + x] = v
-      const was = current.cells[y * n + x]
+      cells[y * w + x] = v
+      const was = current.cells[y * w + x]
       const wasHex = was ? current.palette[was - 1] : null
       const isHex = v ? palette[v - 1] : null
       if (wasHex !== isHex) changed++
     }
-  return { ok: true, doc: { n, cells, palette }, changed }
+  return { ok: true, doc: { w, h, cells, palette }, changed }
 }
 
 /** The picture as RGBA, for its PNG. */
 export function rgbaOfDoc(doc: PixelDoc, rgb: (hex: string) => [number, number, number]): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(doc.n * doc.n * 4)
+  const out = new Uint8ClampedArray(doc.w * doc.h * 4)
   const cols = doc.palette.map(rgb)
-  for (let i = 0; i < doc.n * doc.n; i++) {
+  for (let i = 0; i < doc.w * doc.h; i++) {
     const v = doc.cells[i]
     if (!v) continue
     const c = cols[v - 1]

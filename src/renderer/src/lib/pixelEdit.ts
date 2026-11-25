@@ -12,41 +12,45 @@ export const EMPTY = 0
 
 /** What is being drawn: the grid and its colours. */
 export interface PixelDoc {
-  n: number
+  /** Width and height in dots (need not be equal). */
+  w: number
+  h: number
   cells: Uint8Array
   palette: string[]
 }
 
-export const cloneDoc = (d: PixelDoc): PixelDoc => ({ n: d.n, cells: d.cells.slice(), palette: [...d.palette] })
+export const cloneDoc = (d: PixelDoc): PixelDoc => ({ w: d.w, h: d.h, cells: d.cells.slice(), palette: [...d.palette] })
 
 /** A picture's rows into cells. */
 export function docOfPhoto(p: PhotoArt): PixelDoc {
-  const n = p.rows.length
-  const cells = new Uint8Array(n * n)
+  const h = p.rows.length
+  const w = p.rows[0]?.length ?? 0
+  const cells = new Uint8Array(w * h)
   p.rows.forEach((row, y) => {
-    for (let x = 0; x < n; x++) {
+    for (let x = 0; x < w; x++) {
       const ch = row[x]
-      if (ch && ch !== '.') cells[y * n + x] = PHOTO_CHARS.indexOf(ch) + 1
+      if (ch && ch !== '.') cells[y * w + x] = PHOTO_CHARS.indexOf(ch) + 1
     }
   })
-  return { n, cells, palette: [...p.palette] }
+  return { w, h, cells, palette: [...p.palette] }
 }
 
 /** Cells back into a picture's rows (unused colours are kept; finishPhoto drops them on save). */
 export function photoOfDoc(d: PixelDoc): PhotoArt {
   const rows: string[] = []
-  for (let y = 0; y < d.n; y++) {
+  for (let y = 0; y < d.h; y++) {
     let row = ''
-    for (let x = 0; x < d.n; x++) {
-      const v = d.cells[y * d.n + x]
+    for (let x = 0; x < d.w; x++) {
+      const v = d.cells[y * d.w + x]
       row += v ? PHOTO_CHARS[v - 1] : '.'
     }
     rows.push(row)
   }
-  return d.n === PHOTO ? { palette: [...d.palette], rows } : { palette: [...d.palette], rows, size: d.n as PhotoSize }
+  // A square grid other than 32 keeps the size field its older readers know.
+  return d.w === d.h && d.w !== PHOTO ? { palette: [...d.palette], rows, size: d.w as PhotoSize } : { palette: [...d.palette], rows }
 }
 
-export const blankDoc = (n: number, palette: string[]): PixelDoc => ({ n, cells: new Uint8Array(n * n), palette: [...palette] })
+export const blankDoc = (w: number, h: number, palette: string[]): PixelDoc => ({ w, h, cells: new Uint8Array(w * h), palette: [...palette] })
 
 export const countDots = (cells: Uint8Array): number => {
   let k = 0
@@ -57,7 +61,7 @@ export const countDots = (cells: Uint8Array): number => {
 // ---- drawing ----
 
 /** The dot mirrored across the vertical middle. */
-export const mirrorX = (n: number, x: number): number => n - 1 - x
+export const mirrorX = (w: number, x: number): number => w - 1 - x
 
 /** Every cell on the straight line from a to b, ends included, with no gaps (Bresenham). */
 export function lineCells(x0: number, y0: number, x1: number, y1: number): Array<[number, number]> {
@@ -105,12 +109,12 @@ export function rectCells(x0: number, y0: number, x1: number, y1: number): Array
  * `mirror`. A size-2 brush covers the dot and the ones right and below, a 3
  * is centred. Returns whether anything changed.
  */
-export function stamp(cells: Uint8Array, n: number, x: number, y: number, size: number, value: number, mirror = false): boolean {
+export function stamp(cells: Uint8Array, w: number, h: number, x: number, y: number, size: number, value: number, mirror = false): boolean {
   const from = -Math.floor((size - 1) / 2)
   let changed = false
   const put = (px: number, py: number): void => {
-    if (px < 0 || py < 0 || px >= n || py >= n) return
-    const i = py * n + px
+    if (px < 0 || py < 0 || px >= w || py >= h) return
+    const i = py * w + px
     if (cells[i] === value) return
     cells[i] = value
     changed = true
@@ -118,7 +122,7 @@ export function stamp(cells: Uint8Array, n: number, x: number, y: number, size: 
   for (let dy = 0; dy < size; dy++)
     for (let dx = 0; dx < size; dx++) {
       put(x + from + dx, y + from + dy)
-      if (mirror) put(mirrorX(n, x + from + dx), y + from + dy)
+      if (mirror) put(mirrorX(w, x + from + dx), y + from + dy)
     }
   return changed
 }
@@ -126,14 +130,15 @@ export function stamp(cells: Uint8Array, n: number, x: number, y: number, size: 
 /** Stamps along a list of cells (a line, a rectangle, a dragged stroke). */
 export function stampAll(
   cells: Uint8Array,
-  n: number,
+  w: number,
+  h: number,
   pts: Array<[number, number]>,
   size: number,
   value: number,
   mirror = false
 ): boolean {
   let changed = false
-  for (const [x, y] of pts) if (stamp(cells, n, x, y, size, value, mirror)) changed = true
+  for (const [x, y] of pts) if (stamp(cells, w, h, x, y, size, value, mirror)) changed = true
   return changed
 }
 
@@ -142,31 +147,31 @@ export function stampAll(
  * becomes `value` (air fills air too, so a fill outside the pet floods the
  * background). With `mirror`, the mirrored cell is filled the same way.
  */
-export function floodFill(cells: Uint8Array, n: number, x: number, y: number, value: number, mirror = false): boolean {
+export function floodFill(cells: Uint8Array, w: number, h: number, x: number, y: number, value: number, mirror = false): boolean {
   const one = (sx: number, sy: number): boolean => {
-    if (sx < 0 || sy < 0 || sx >= n || sy >= n) return false
-    const from = cells[sy * n + sx]
+    if (sx < 0 || sy < 0 || sx >= w || sy >= h) return false
+    const from = cells[sy * w + sx]
     if (from === value) return false
-    const stack = [sy * n + sx]
-    cells[sy * n + sx] = value
+    const stack = [sy * w + sx]
+    cells[sy * w + sx] = value
     while (stack.length) {
       const p = stack.pop()!
-      const px = p % n
-      const py = (p - px) / n
+      const px = p % w
+      const py = (p - px) / w
       const visit = (q: number): void => {
         if (cells[q] !== from) return
         cells[q] = value
         stack.push(q)
       }
       if (px > 0) visit(p - 1)
-      if (px < n - 1) visit(p + 1)
-      if (py > 0) visit(p - n)
-      if (py < n - 1) visit(p + n)
+      if (px < w - 1) visit(p + 1)
+      if (py > 0) visit(p - w)
+      if (py < h - 1) visit(p + w)
     }
     return true
   }
   const a = one(x, y)
-  const b = mirror ? one(mirrorX(n, x), y) : false
+  const b = mirror ? one(mirrorX(w, x), y) : false
   return a || b
 }
 
@@ -178,7 +183,7 @@ export function floodFill(cells: Uint8Array, n: number, x: number, y: number, va
  * clean-up (petCustomArt tidy) uses, so a thin leg drawn corner to corner is
  * one piece with its body.
  */
-export function piecesOf(cells: Uint8Array, n: number): number[][] {
+export function piecesOf(cells: Uint8Array, w: number, h: number): number[][] {
   const seen = new Uint8Array(cells.length)
   const out: number[][] = []
   for (let s = 0; s < cells.length; s++) {
@@ -189,14 +194,14 @@ export function piecesOf(cells: Uint8Array, n: number): number[][] {
     while (stack.length) {
       const p = stack.pop()!
       part.push(p)
-      const px = p % n
-      const py = (p - px) / n
+      const px = p % w
+      const py = (p - px) / w
       for (let dy = -1; dy <= 1; dy++)
         for (let dx = -1; dx <= 1; dx++) {
           const qx = px + dx
           const qy = py + dy
-          if ((!dx && !dy) || qx < 0 || qy < 0 || qx >= n || qy >= n) continue
-          const q = qy * n + qx
+          if ((!dx && !dy) || qx < 0 || qy < 0 || qx >= w || qy >= h) continue
+          const q = qy * w + qx
           if (!cells[q] || seen[q]) continue
           seen[q] = 1
           stack.push(q)
@@ -208,8 +213,8 @@ export function piecesOf(cells: Uint8Array, n: number): number[][] {
 }
 
 /** Only the biggest piece is kept; returns whether anything went. */
-export function keepBiggest(cells: Uint8Array, n: number): boolean {
-  const pieces = piecesOf(cells, n)
+export function keepBiggest(cells: Uint8Array, w: number, h: number): boolean {
+  const pieces = piecesOf(cells, w, h)
   if (pieces.length < 2) return false
   for (const part of pieces.slice(1)) for (const p of part) cells[p] = EMPTY
   return true
@@ -287,7 +292,7 @@ export interface CellRect {
   y1: number
 }
 
-export const fullRect = (n: number): CellRect => ({ x0: 0, y0: 0, x1: n - 1, y1: n - 1 })
+export const fullRect = (w: number, h: number): CellRect => ({ x0: 0, y0: 0, x1: w - 1, y1: h - 1 })
 
 /** The rectangle spanned by two cells, in either order. */
 export const rectOf = (ax: number, ay: number, bx: number, by: number): CellRect => ({
@@ -305,24 +310,24 @@ export const shiftRect = (r: CellRect, dx: number, dy: number): CellRect => ({
 })
 
 /** Moves what is inside `r` by (dx, dy), in place. Dots pushed off the edge are lost; the rest keep their colour. */
-export function moveRect(cells: Uint8Array, n: number, r: CellRect, dx: number, dy: number): void {
+export function moveRect(cells: Uint8Array, gw: number, gh: number, r: CellRect, dx: number, dy: number): void {
   const w = r.x1 - r.x0 + 1
   const h = r.y1 - r.y0 + 1
   const block = new Uint8Array(w * h)
-  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) block[j * w + i] = cells[(r.y0 + j) * n + r.x0 + i]
-  clearRect(cells, n, r)
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) block[j * w + i] = cells[(r.y0 + j) * gw + r.x0 + i]
+  clearRect(cells, gw, r)
   for (let j = 0; j < h; j++) {
     const ty = r.y0 + j + dy
-    if (ty < 0 || ty >= n) continue
+    if (ty < 0 || ty >= gh) continue
     for (let i = 0; i < w; i++) {
       const v = block[j * w + i]
       const tx = r.x0 + i + dx
-      if (v && tx >= 0 && tx < n) cells[ty * n + tx] = v
+      if (v && tx >= 0 && tx < gw) cells[ty * gw + tx] = v
     }
   }
 }
 
 /** Empties `r` (background removal), in place. */
-export function clearRect(cells: Uint8Array, n: number, r: CellRect): void {
-  for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) cells[y * n + x] = EMPTY
+export function clearRect(cells: Uint8Array, w: number, r: CellRect): void {
+  for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) cells[y * w + x] = EMPTY
 }

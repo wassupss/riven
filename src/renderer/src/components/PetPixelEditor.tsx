@@ -108,11 +108,11 @@ function DocCanvas({ doc, label }: { doc: PixelDoc; label: string }): JSX.Elemen
   useEffect(() => {
     const ctx = ref.current?.getContext('2d')
     if (!ctx) return
-    const img = ctx.createImageData(doc.n, doc.n)
+    const img = ctx.createImageData(doc.w, doc.h)
     img.data.set(rgbaOfDoc(doc, hexToRgb))
     ctx.putImageData(img, 0, 0)
   }, [doc])
-  return <canvas ref={ref} width={doc.n} height={doc.n} className="pm-pixels pai-canvas" aria-label={label} />
+  return <canvas ref={ref} width={doc.w} height={doc.h} className="pm-pixels pai-canvas" aria-label={label} />
 }
 
 export default function PetPixelEditor({
@@ -158,7 +158,9 @@ export default function PetPixelEditor({
   const hover = useRef<[number, number] | null>(null)
   const stroke = useRef<Stroke | null>(null)
   const frame = useRef(0)
-  const n = doc.current.n
+  // The grid: width and height in dots (not always equal).
+  const W = doc.current.w
+  const H = doc.current.h
 
   // The "fit" size is the largest square the stage has room for; zoom makes
   // the canvas bigger and the view scrolls.
@@ -185,11 +187,11 @@ export default function PetPixelEditor({
     onionOn.current = !!onion
     if (!onion) return
     const c = (onionSrc.current ??= document.createElement('canvas'))
-    c.width = onion.n
-    c.height = onion.n
+    c.width = onion.w
+    c.height = onion.h
     const ctx = c.getContext('2d')
     if (!ctx) return
-    const img = ctx.createImageData(onion.n, onion.n)
+    const img = ctx.createImageData(onion.w, onion.h)
     img.data.set(rgbaOfDoc(onion, hexToRgb))
     ctx.putImageData(img, 0, 0)
   }, [onion])
@@ -197,18 +199,19 @@ export default function PetPixelEditor({
   const paint = useCallback((): void => {
     frame.current = 0
     const d = doc.current
-    const N = d.n
+    const GW = d.w
+    const GH = d.h
     const rgb = d.palette.map(hexToRgb)
     // The picture at its own size: the source the big view scales up, and the real-size preview.
     const src = (source.current ??= document.createElement('canvas'))
-    if (src.width !== N) {
-      src.width = N
-      src.height = N
+    if (src.width !== GW || src.height !== GH) {
+      src.width = GW
+      src.height = GH
     }
     const sctx = src.getContext('2d')
     if (!sctx) return
-    const img = sctx.createImageData(N, N)
-    for (let i = 0; i < N * N; i++) {
+    const img = sctx.createImageData(GW, GH)
+    for (let i = 0; i < GW * GH; i++) {
       const v = d.cells[i]
       if (!v) continue
       const c = rgb[v - 1]
@@ -224,26 +227,33 @@ export default function PetPixelEditor({
     const cv = canvasRef.current
     const ctx = cv?.getContext('2d')
     if (!cv || !ctx) return
-    const W = cv.width
-    const k = W / N
-    ctx.clearRect(0, 0, W, W)
+    // One size for every dot (the grid's cell), on both axes: the canvas is the picture's own shape.
+    const kx = cv.width / GW
+    const ky = cv.height / GH
+    const k = Math.min(kx, ky)
+    const CW = cv.width
+    const CH = cv.height
+    ctx.clearRect(0, 0, CW, CH)
     ctx.imageSmoothingEnabled = false
     if (onionOn.current && onionSrc.current) {
       ctx.globalAlpha = 0.3
-      ctx.drawImage(onionSrc.current, 0, 0, W, W)
+      ctx.drawImage(onionSrc.current, 0, 0, CW, CH)
       ctx.globalAlpha = 1
     }
-    ctx.drawImage(src, 0, 0, W, W)
-    const at = (i: number): number => Math.round(i * k) + 0.5
+    ctx.drawImage(src, 0, 0, CW, CH)
+    const atX = (i: number): number => Math.round(i * kx) + 0.5
+    const atY = (i: number): number => Math.round(i * ky) + 0.5
     if (grid && k >= 4) {
       ctx.strokeStyle = 'rgba(128,128,128,0.22)'
       ctx.lineWidth = 1
       ctx.beginPath()
-      for (let i = 1; i < N; i++) {
-        ctx.moveTo(at(i), 0)
-        ctx.lineTo(at(i), W)
-        ctx.moveTo(0, at(i))
-        ctx.lineTo(W, at(i))
+      for (let i = 1; i < GW; i++) {
+        ctx.moveTo(atX(i), 0)
+        ctx.lineTo(atX(i), CH)
+      }
+      for (let i = 1; i < GH; i++) {
+        ctx.moveTo(0, atY(i))
+        ctx.lineTo(CW, atY(i))
       }
       ctx.stroke()
     }
@@ -251,8 +261,8 @@ export default function PetPixelEditor({
       ctx.strokeStyle = accent.current
       ctx.lineWidth = Math.max(1, Math.round(window.devicePixelRatio || 1))
       ctx.beginPath()
-      ctx.moveTo(W / 2, 0)
-      ctx.lineTo(W / 2, W)
+      ctx.moveTo(CW / 2, 0)
+      ctx.lineTo(CW / 2, CH)
       ctx.stroke()
     }
     const sr = selRef.current
@@ -260,7 +270,7 @@ export default function PetPixelEditor({
       ctx.setLineDash([4, 3])
       ctx.strokeStyle = accent.current
       ctx.lineWidth = Math.max(1, Math.round(window.devicePixelRatio || 1))
-      ctx.strokeRect(Math.round(sr.x0 * k) + 0.5, Math.round(sr.y0 * k) + 0.5, Math.round((sr.x1 - sr.x0 + 1) * k) - 1, Math.round((sr.y1 - sr.y0 + 1) * k) - 1)
+      ctx.strokeRect(Math.round(sr.x0 * kx) + 0.5, Math.round(sr.y0 * ky) + 0.5, Math.round((sr.x1 - sr.x0 + 1) * kx) - 1, Math.round((sr.y1 - sr.y0 + 1) * ky) - 1)
       ctx.setLineDash([])
     }
     // Where the brush would land.
@@ -269,13 +279,14 @@ export default function PetPixelEditor({
       const from = -Math.floor((size - 1) / 2)
       ctx.strokeStyle = accent.current
       ctx.lineWidth = Math.max(1, Math.round(window.devicePixelRatio || 1))
-      const box = (x: number): void => ctx.strokeRect(Math.round(x * k) + 0.5, Math.round((h[1] + from) * k) + 0.5, Math.round(size * k) - 1, Math.round(size * k) - 1)
+      const box = (x: number): void =>
+        ctx.strokeRect(Math.round(x * kx) + 0.5, Math.round((h[1] + from) * ky) + 0.5, Math.round(size * kx) - 1, Math.round(size * ky) - 1)
       box(h[0] + from)
-      if (mirror) box(N - 1 - (h[0] + from) - (size - 1))
+      if (mirror) box(GW - 1 - (h[0] + from) - (size - 1))
     } else if (h) {
       ctx.strokeStyle = accent.current
       ctx.lineWidth = 1
-      ctx.strokeRect(Math.round(h[0] * k) + 0.5, Math.round(h[1] * k) + 0.5, Math.round(k) - 1, Math.round(k) - 1)
+      ctx.strokeRect(Math.round(h[0] * kx) + 0.5, Math.round(h[1] * ky) + 0.5, Math.round(kx) - 1, Math.round(ky) - 1)
     }
   }, [grid, mirror, tool, size])
 
@@ -291,17 +302,21 @@ export default function PetPixelEditor({
   }, [schedule])
 
   // The big canvas's backing store follows its css size and the screen's density.
-  const css = fit * Number(zoom)
+  // The picture's longer side is the fit box (times the zoom); the shorter one follows the picture's shape.
+  const cell = (fit * Number(zoom)) / Math.max(W, H)
+  const cssW = Math.round(W * cell)
+  const cssH = Math.round(H * cell)
   useEffect(() => {
     const cv = canvasRef.current
     if (!cv) return
-    const px = Math.round(css * (window.devicePixelRatio || 1))
-    if (cv.width !== px) {
-      cv.width = px
-      cv.height = px
+    const pxW = Math.round(cssW * (window.devicePixelRatio || 1))
+    const pxH = Math.round(cssH * (window.devicePixelRatio || 1))
+    if (cv.width !== pxW || cv.height !== pxH) {
+      cv.width = pxW
+      cv.height = pxH
     }
     schedule()
-  }, [css, schedule, version, onion])
+  }, [cssW, cssH, schedule, version, onion])
 
   // ---- commits and undo ----
   // The maker's handler changes every render; the keys listener should not re-subscribe for it.
@@ -343,7 +358,7 @@ export default function PetPixelEditor({
 
   // A whole new picture (the AI's, applied): one undo step.
   const applyDoc = (next: PixelDoc): void => {
-    if (next.n !== doc.current.n) return
+    if (next.w !== doc.current.w || next.h !== doc.current.h) return
     const before = cloneDoc(doc.current)
     doc.current = cloneDoc(next)
     setColor((c) => Math.min(c, Math.max(0, next.palette.length - 1)))
@@ -354,12 +369,12 @@ export default function PetPixelEditor({
   // ---- pointer ----
   const cellOf = (e: ReactPointerEvent<HTMLCanvasElement>): [number, number] => {
     const r = e.currentTarget.getBoundingClientRect()
-    return [Math.floor(((e.clientX - r.left) / r.width) * n), Math.floor(((e.clientY - r.top) / r.height) * n)]
+    return [Math.floor(((e.clientX - r.left) / r.width) * W), Math.floor(((e.clientY - r.top) / r.height) * H)]
   }
-  const inGrid = ([x, y]: [number, number]): boolean => x >= 0 && y >= 0 && x < n && y < n
+  const inGrid = ([x, y]: [number, number]): boolean => x >= 0 && y >= 0 && x < W && y < H
 
   const pick = ([x, y]: [number, number]): void => {
-    const v = doc.current.cells[y * n + x]
+    const v = doc.current.cells[y * W + x]
     if (v) setColor(v - 1)
   }
 
@@ -391,11 +406,11 @@ export default function PetPixelEditor({
     }
     if (tool === 'move') {
       // The selection moves on its own; with none, the whole picture does.
-      stroke.current = { before, value: 0, last: pt, anchor: pt, base: d.cells.slice(), changed: false, rect: selRef.current ?? fullRect(n) }
+      stroke.current = { before, value: 0, last: pt, anchor: pt, base: d.cells.slice(), changed: false, rect: selRef.current ?? fullRect(W, H) }
       return
     }
     if (tool === 'fill') {
-      if (floodFill(d.cells, n, pt[0], pt[1], value, mirror)) {
+      if (floodFill(d.cells, W, H, pt[0], pt[1], value, mirror)) {
         commit(before)
         schedule()
       }
@@ -403,7 +418,7 @@ export default function PetPixelEditor({
     }
     const s: Stroke = { before, value, last: pt, anchor: pt, base: null, changed: false }
     if (tool === 'line' || tool === 'rect') s.base = d.cells.slice()
-    s.changed = stamp(d.cells, n, pt[0], pt[1], size, value, mirror)
+    s.changed = stamp(d.cells, W, H, pt[0], pt[1], size, value, mirror)
     stroke.current = s
     schedule()
   }
@@ -431,7 +446,7 @@ export default function PetPixelEditor({
       const dx = pt[0] - s.anchor[0]
       const dy = pt[1] - s.anchor[1]
       d.cells.set(s.base)
-      moveRect(d.cells, n, s.rect, dx, dy)
+      moveRect(d.cells, W, H, s.rect, dx, dy)
       s.moved = [dx, dy]
       if (selRef.current) selRef.current = shiftRect(s.rect, dx, dy)
       s.changed = dx !== 0 || dy !== 0
@@ -439,9 +454,9 @@ export default function PetPixelEditor({
       // The shape is drawn again over what was under it, every move.
       d.cells.set(s.base)
       const pts = tool === 'line' ? lineCells(s.anchor[0], s.anchor[1], pt[0], pt[1]) : rectCells(s.anchor[0], s.anchor[1], pt[0], pt[1])
-      stampAll(d.cells, n, pts, size, s.value, mirror)
+      stampAll(d.cells, W, H, pts, size, s.value, mirror)
       s.changed = true
-    } else if (stampAll(d.cells, n, lineCells(s.last[0], s.last[1], pt[0], pt[1]), size, s.value, mirror)) {
+    } else if (stampAll(d.cells, W, H, lineCells(s.last[0], s.last[1], pt[0], pt[1]), size, s.value, mirror)) {
       // Every cell between the last event and this one: no gaps however fast the drag.
       s.changed = true
     }
@@ -470,7 +485,7 @@ export default function PetPixelEditor({
     if (!r) return
     const d = doc.current
     const before = cloneDoc(d)
-    clearRect(d.cells, d.n, r)
+    clearRect(d.cells, d.w, r)
     if (before.cells.some((v, i) => v !== d.cells[i])) commit(before)
     schedule()
   }, [commit, schedule])
@@ -478,8 +493,8 @@ export default function PetPixelEditor({
     (dx: number, dy: number): void => {
       const d = doc.current
       const before = cloneDoc(d)
-      const r = selRef.current ?? fullRect(d.n)
-      moveRect(d.cells, d.n, r, dx, dy)
+      const r = selRef.current ?? fullRect(d.w, d.h)
+      moveRect(d.cells, d.w, d.h, r, dx, dy)
       if (selRef.current) setSelState((selRef.current = shiftRect(r, dx, dy)))
       commit(before)
       schedule()
@@ -557,8 +572,8 @@ export default function PetPixelEditor({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const dots = useMemo(() => countDots(doc.current.cells), [version])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const pieces = useMemo(() => piecesOf(doc.current.cells, n).length, [version, n])
-  const need = minPhotoCells(n)
+  const pieces = useMemo(() => piecesOf(doc.current.cells, W, H).length, [version, W, H])
+  const need = minPhotoCells(W, H)
   const canUndo = history.current.past.length > 0
   const canRedo = history.current.future.length > 0
   const toolName = (id: PixelTool): string => t(`pet.px.tool.${id}`)
@@ -642,7 +657,7 @@ export default function PetPixelEditor({
             <canvas
               ref={canvasRef}
               className={`pmx-canvas tool-${tool}`}
-              style={{ width: css, height: css }}
+              style={{ width: cssW, height: cssH }}
               onPointerDown={onDown}
               onPointerMove={onMove}
               onPointerUp={onUp}
@@ -731,8 +746,8 @@ export default function PetPixelEditor({
           placeholder={t('pet.ai.pixelHint')}
           build={(q) => {
             const d = doc.current
-            const scale = scaleFor(d.n)
-            const images = [pngOf(d.n, d.n, rgbaOfDoc(d, hexToRgb), scale)]
+            const scale = scaleFor(Math.max(d.w, d.h))
+            const images = [pngOf(d.w, d.h, rgbaOfDoc(d, hexToRgb), scale)]
             if (photo) images.push(pngOf(photo.width, photo.height, new Uint8ClampedArray(photo.data), 1))
             return { system: PIXEL_SYSTEM, prompt: buildPixelPrompt(d, q, { scale, photo: !!photo }), images }
           }}
@@ -758,7 +773,7 @@ export default function PetPixelEditor({
 
       <aside className="pmk-side">
         {side({
-          real: <canvas ref={small1} width={n} height={n} className="pm-pixels pmx-real1" aria-label={t('pet.px.realSize')} />,
+          real: <canvas ref={small1} width={W} height={H} className="pm-pixels pmx-real1" aria-label={t('pet.px.realSize')} />,
           status: (
             <>
               {dots < need && <p className="pmk-note pmx-warn">{t('pet.px.dots', { n: dots, min: need })}</p>}
@@ -769,7 +784,7 @@ export default function PetPixelEditor({
                     <Button
                       onClick={() => {
                         const before = cloneDoc(doc.current)
-                        if (keepBiggest(doc.current.cells, n)) {
+                        if (keepBiggest(doc.current.cells, W, H)) {
                           commit(before)
                           schedule()
                         }

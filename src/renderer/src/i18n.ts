@@ -2151,6 +2151,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.maker.colorCount': { ko: '색 개수', en: 'Colour count' },
   'pet.maker.photoColor': { ko: '색 {n}', en: 'Colour {n}' },
   'pet.maker.resolution': { ko: '해상도', en: 'Resolution' },
+  'pet.maker.width': { ko: '가로', en: 'Width' },
+  'pet.maker.height': { ko: '세로', en: 'Height' },
   // ---- pet maker: the pixel editor (PetPixelEditor.tsx) ----
   'pet.px.tools': { ko: '그리기 도구', en: 'Drawing tools' },
   'pet.px.tool.pencil': { ko: '연필', en: 'Pencil' },

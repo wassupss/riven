@@ -1,4 +1,4 @@
-import { PHOTO_CHARS, PHOTO_MAX_COLORS, minPhotoCells, photoSizeOf, type PhotoArt, type PhotoSize, PHOTO } from './petPhotoGrid'
+import { PHOTO_CHARS, PHOTO_MAX_COLORS, minPhotoCells, photoDimsOf, type PhotoArt, type PhotoSize, PHOTO } from './petPhotoGrid'
 import { extractJson } from './petAi'
 import { parsePixelObject } from './petAiPixels'
 import { isSituation, sanitizeMotionSet, type MotionCheck, type MotionSet, type Situation } from './petMotion'
@@ -38,20 +38,20 @@ const fail = <T>(reason: string, vars?: Record<string, string | number>): Motion
 
 /** One frame's rows against the picture: its size, its palette, enough dots. */
 export function checkFrame(raw: unknown, photo: PhotoArt, label: string): MotionCheck<string[]> {
-  const n = photoSizeOf(photo)
-  if (!Array.isArray(raw) || raw.length !== n) return fail('pet.fr.err.rows', { k: label, n })
+  const { w, h } = photoDimsOf(photo)
+  if (!Array.isArray(raw) || raw.length !== h) return fail('pet.fr.err.rows', { k: label, n: h })
   const ok = '.' + PHOTO_CHARS.slice(0, photo.palette.length)
   let dots = 0
   const rows: string[] = []
   for (const row of raw) {
-    if (typeof row !== 'string' || row.length !== n) return fail('pet.fr.err.rows', { k: label, n })
+    if (typeof row !== 'string' || row.length !== w) return fail('pet.fr.err.rows', { k: label, n: w })
     for (const ch of row) {
       if (!ok.includes(ch)) return fail('pet.fr.err.char', { k: label, ch })
       if (ch !== '.') dots++
     }
     rows.push(row)
   }
-  const min = minPhotoCells(n)
+  const min = minPhotoCells(w, h)
   if (dots < min) return fail('pet.fr.err.dots', { k: label, n: dots, min })
   return { ok: true, value: rows }
 }
@@ -159,9 +159,10 @@ export function finishPhotoFrames(
   const pic = re(rows)
   let cells = 0
   for (const row of pic) for (const ch of row) if (ch !== '.') cells++
-  const size = pic.length
-  if (cells < minPhotoCells(size)) return null
-  const photo: PhotoArt = { palette: order.map((i) => palette[i]), rows: pic, ...(size === PHOTO ? {} : { size: size as PhotoSize }) }
+  const h = pic.length
+  const w = pic[0]?.length ?? 0
+  if (cells < minPhotoCells(w, h)) return null
+  const photo: PhotoArt = { palette: order.map((i) => palette[i]), rows: pic, ...(w === h && w !== PHOTO ? { size: w as PhotoSize } : {}) }
   let out: FrameMap | undefined
   for (const [s, f] of sets) (out ??= {})[s] = { fps: f.fps, frames: f.frames.map(re) }
   return { photo, frames: out }
@@ -176,21 +177,21 @@ export const FRAMES_SYSTEM = [
 ].join(' ')
 
 export function buildFramesPrompt(doc: PixelDoc, rows: string[], request: string, scale: number): string {
-  const n = doc.n
+  const { w, h } = doc
   const palette = doc.palette.map((hex, i) => `${PHOTO_CHARS[i]} ${hex}`).join('\n')
   const { min, max } = FRAME_LIMITS.count
   return [
     `Request: ${request.trim()}`,
     '',
     `Draw ${min} to ${max} frames of an animation loop of this pet (the request may say how many).`,
-    `The picture is ${n}x${n} dots: ${n} rows of ${n} characters. '.' is transparent; any other character is a palette key.`,
+    `The picture is ${w}x${h} dots: ${h} rows of ${w} characters. '.' is transparent; any other character is a palette key.`,
     `The attached image is the picture, each dot a ${scale}x${scale} square.`,
     '',
     'Palette (character, colour):',
     palette,
     '',
     'Rules:',
-    `- Every frame is exactly ${n} rows of exactly ${n} characters.`,
+    `- Every frame is exactly ${h} rows of exactly ${w} characters.`,
     '- Use the same palette keys and colours; add a colour only if you must (at most 16 in all).',
     '- Keep the pet in the same place and size; change only what moves (eyes, tail, legs, ears).',
     '- Frames follow each other smoothly and the last leads back to the first.',
@@ -251,12 +252,12 @@ export function parseFramesAnswer(text: string, base: PixelDoc): FramesAnswer {
 }
 
 /** Cells (0 air, k+1 colour k) as a frame's rows. */
-export function rowsOfCells(n: number, cells: Uint8Array): string[] {
+export function rowsOfCells(w: number, h: number, cells: Uint8Array): string[] {
   const rows: string[] = []
-  for (let y = 0; y < n; y++) {
+  for (let y = 0; y < h; y++) {
     let row = ''
-    for (let x = 0; x < n; x++) {
-      const v = cells[y * n + x]
+    for (let x = 0; x < w; x++) {
+      const v = cells[y * w + x]
       row += v ? PHOTO_CHARS[v - 1] : '.'
     }
     rows.push(row)
@@ -266,12 +267,13 @@ export function rowsOfCells(n: number, cells: Uint8Array): string[] {
 
 /** A frame's rows as cells. */
 export function cellsOfRows(rows: string[]): Uint8Array {
-  const n = rows.length
-  const cells = new Uint8Array(n * n)
+  const h = rows.length
+  const w = rows[0]?.length ?? 0
+  const cells = new Uint8Array(w * h)
   rows.forEach((row, y) => {
-    for (let x = 0; x < n; x++) {
+    for (let x = 0; x < w; x++) {
       const ch = row[x]
-      if (ch && ch !== '.') cells[y * n + x] = PHOTO_CHARS.indexOf(ch) + 1
+      if (ch && ch !== '.') cells[y * w + x] = PHOTO_CHARS.indexOf(ch) + 1
     }
   })
   return cells

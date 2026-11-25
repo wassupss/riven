@@ -4,13 +4,13 @@ import { buildPixelPrompt, gridRows, parsePixelAnswer, rgbaOfDoc } from './petAi
 import { BLOB, HAIKU_PIXEL_ANSWER } from './petAi.fixtures'
 import type { PixelDoc } from './pixelEdit'
 
-const blob = (): PixelDoc => ({ n: BLOB.n, cells: Uint8Array.from(BLOB.cells), palette: [...BLOB.palette] })
+const blob = (): PixelDoc => ({ w: BLOB.n, h: BLOB.n, cells: Uint8Array.from(BLOB.cells), palette: [...BLOB.palette] })
 
 /** A tiny picture for hand-written answers: n x n, slot 1 on the diagonal. */
 const tiny = (n = 4): PixelDoc => {
   const cells = new Uint8Array(n * n)
   for (let i = 0; i < n; i++) cells[i * n + i] = 1
-  return { n, cells, palette: ['#112233'] }
+  return { w: n, h: n, cells, palette: ['#112233'] }
 }
 const answer = (grid: unknown, palette: unknown): string => JSON.stringify({ grid, palette })
 
@@ -95,7 +95,7 @@ describe('checking the answer', () => {
   it('refuses more than 16 colours in use, but not unused extras', () => {
     const n = 17
     const cells = new Uint8Array(n * n)
-    const doc: PixelDoc = { n, cells, palette: ['#000000'] }
+    const doc: PixelDoc = { w: n, h: n, cells, palette: ['#000000'] }
     const keys = 'ABCDEFGHIJKLMNOPQ'
     const pal = Object.fromEntries([...keys].map((k, i) => [k, `#0000${(i + 16).toString(16)}`]))
     const grid = Array.from({ length: n }, (_, y) => keys[y] + '.'.repeat(n - 1))

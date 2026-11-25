@@ -20,23 +20,33 @@ export const MIN_PHOTO_CELLS = 60
 export interface PhotoArt {
   /** Up to 16 '#rrggbb' colours. */
   palette: string[]
-  /** `size` rows of `size` characters: '.' or a PHOTO_CHARS index into `palette`. */
+  /**
+   * `h` rows of `w` characters: '.' or a PHOTO_CHARS index into `palette`.
+   * The grid need not be square: a tall picture has more rows than columns.
+   */
   rows: string[]
   /**
-   * The grid, 48 or 64. Left out at 32, which is what every picture made
-   * before the choice came in is, so their data reads and writes unchanged.
+   * A square grid of 48 or 64, kept for the riven that reads it. Left out at
+   * 32, and on every picture that is not square (its rows say its size).
    */
   size?: PhotoSize
 }
 
-/** A picture's grid (32 when it does not say). */
-export const photoSizeOf = (p: PhotoArt): PhotoSize => p.size ?? PHOTO
+/** A grid's width and height in dots. */
+export interface PhotoDims {
+  w: number
+  h: number
+}
 
-/** The fewest dots a picture of `size` may have: MIN_PHOTO_CELLS, by area. */
-export const minPhotoCells = (size: number): number => Math.round((MIN_PHOTO_CELLS * size * size) / (PHOTO * PHOTO))
+/** A picture's grid, read from its rows (32 square when it has none). */
+export const photoDimsOf = (p: PhotoArt): PhotoDims => ({ w: p.rows[0]?.length ?? PHOTO, h: p.rows.length || PHOTO })
+
+/** The fewest dots a picture may have: MIN_PHOTO_CELLS, by area (a 32 by 32 is the reference). */
+export const minPhotoCells = (w: number, h: number = w): number => Math.round((MIN_PHOTO_CELLS * w * h) / (PHOTO * PHOTO))
 
 /**
  * How many dots thick a picture's outline is drawn, and so how much air it
- * keeps round itself: about a css pixel, never less than a dot.
+ * keeps round itself: about a css pixel, never less than a dot. A rectangle
+ * takes its shorter side (the subject is square and lives in it).
  */
 export const photoLine = (size: number): number => Math.max(1, Math.floor(size / PHOTO))
