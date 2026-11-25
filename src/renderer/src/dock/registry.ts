@@ -783,11 +783,18 @@ export async function addAssistant(bornAt: number): Promise<void> {
   })
   // The floating pet is a window on the desktop: the conversation is its own window
   // just to the pet's left, so both show at once.
+  // Keep the whole panel (its composer included) inside the room it is placed in: the
+  // height shrinks to the room, and the top moves up when the pet sits low.
+  const fit = (top: number, room: number): { top: number; height: number } => {
+    const height = Math.max(240, Math.min(H, room - 16))
+    return { top: Math.min(Math.max(8, top), Math.max(8, room - height - 8)), height }
+  }
   const box = await window.api.pet.windowBox().catch(() => null)
   if (box) {
     try {
+      const f = fit(box.y, window.screen.availHeight || window.innerHeight)
       await api.addPopoutGroup(panel, {
-        position: { left: Math.max(0, box.x - W - 8), top: Math.max(0, box.y), width: W, height: H }
+        position: { left: Math.max(0, box.x - W - 8), top: f.top, width: W, height: f.height }
       })
       return
     } catch (e) {
@@ -799,11 +806,14 @@ export async function addAssistant(bornAt: number): Promise<void> {
   const petEl = document.querySelector('.pet-device .pet-stage') as HTMLElement | null
   if (petEl) {
     const pr = petEl.getBoundingClientRect()
-    const dr = (document.querySelector('.dv-dockview') as HTMLElement | null)?.getBoundingClientRect() ?? { left: 0, top: 0 }
+    const dock = (document.querySelector('.dv-dockview') as HTMLElement | null)?.getBoundingClientRect()
+    const dl = dock?.left ?? 0
+    const dt = dock?.top ?? 0
+    const f = fit(pr.top - dt, dock?.height || window.innerHeight)
     api.addFloatingGroup(panel, {
       width: W,
-      height: H,
-      position: { left: Math.max(0, pr.left - dr.left - W - 8), top: Math.max(0, pr.top - dr.top) }
+      height: f.height,
+      position: { left: Math.max(0, pr.left - dl - W - 8), top: f.top }
     })
     return
   }
