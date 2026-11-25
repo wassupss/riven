@@ -98,6 +98,8 @@ interface Stroke {
   /** Move: the part being moved (the selection, or the whole picture) and how far it has gone. */
   rect?: CellRect
   moved?: [number, number]
+  /** Select tool, pressed inside the selection: this drag moves the selected part. */
+  moving?: boolean
 }
 
 /** A picture at its own size on a canvas (CSS scales it up, pixelated). */
@@ -377,6 +379,12 @@ export default function PetPixelEditor({
     const value = tool === 'eraser' || e.button === 2 ? EMPTY : color + 1
     const before = cloneDoc(d)
     if (tool === 'select') {
+      // Pressed inside the selection: drag it, no tool change needed. Elsewhere: a new selection.
+      const cur = selRef.current
+      if (cur && pt[0] >= cur.x0 && pt[0] <= cur.x1 && pt[1] >= cur.y0 && pt[1] <= cur.y1) {
+        stroke.current = { before, value: 0, last: pt, anchor: pt, base: d.cells.slice(), changed: false, rect: cur, moving: true }
+        return
+      }
       setSel({ x0: pt[0], y0: pt[1], x1: pt[0], y1: pt[1] })
       stroke.current = { before, value: 0, last: pt, anchor: pt, base: null, changed: false }
       return
@@ -417,9 +425,9 @@ export default function PetPixelEditor({
     const d = doc.current
     if (tool === 'picker') {
       if (inGrid(pt)) pick(pt)
-    } else if (tool === 'select') {
+    } else if (tool === 'select' && !s.moving) {
       setSel(rectOf(s.anchor[0], s.anchor[1], pt[0], pt[1]))
-    } else if (tool === 'move' && s.rect && s.base) {
+    } else if ((tool === 'move' || s.moving) && s.rect && s.base) {
       const dx = pt[0] - s.anchor[0]
       const dy = pt[1] - s.anchor[1]
       d.cells.set(s.base)
@@ -450,8 +458,8 @@ export default function PetPixelEditor({
       setTool('pencil')
       return
     }
-    if (tool === 'select') return
-    if (tool === 'move' && s.moved && selRef.current && s.rect) setSelState(selRef.current)
+    if (tool === 'select' && !s.moving) return
+    if (s.moved && selRef.current && s.rect) setSelState(selRef.current)
     const now = doc.current.cells
     if (s.changed && s.before.cells.some((v, i) => v !== now[i])) commit(s.before)
   }
