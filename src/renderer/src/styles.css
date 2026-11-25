@@ -3872,7 +3872,8 @@ select {
   flex-direction: column;
   gap: 8px;
 }
-/* User turn: left-aligned, faint accent-tinted bubble, no border (native). */
+/* User turn: left-aligned, a neutral bubble. The accent is the one hot thing on the page,
+   so the person's own messages do not spend it. */
 .chat-turn.user {
   align-items: flex-start;
 }
@@ -3928,20 +3929,24 @@ select {
   padding: 1px 7px;
 }
 .chat-user-bubble {
-  background: var(--accent-muted);
+  background: var(--bg-3);
+  border: 1px solid var(--hairline);
   color: var(--fg);
   padding: 8px 12px;
   border-radius: var(--radius-lg);
-  max-width: calc(100% - 40px);
+  max-width: min(calc(100% - 40px), 72ch);
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--text-sm);
   line-height: 1.55;
 }
-/* Assistant turn: open column (no card). Base text softened so bold pops. */
+/* Assistant turn: open column (no card). Base text softened so bold pops. The text is
+   held to a readable measure (about 72 characters); code blocks and tables keep their own
+   width and scroll inside it. */
 .chat-assistant-text {
   color: color-mix(in srgb, var(--fg) 82%, transparent);
   font-size: var(--text-sm);
+  max-width: 72ch;
 }
 .chat-assistant-text strong,
 .chat-assistant-text b {
