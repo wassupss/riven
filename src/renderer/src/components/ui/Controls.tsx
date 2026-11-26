@@ -1,4 +1,5 @@
 import type { ReactNode, SelectHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes, ButtonHTMLAttributes } from 'react'
+import { Button as UiButton } from './button'
 
 // Shared form controls with ONE consistent look + height (var(--ctl-h)). Use
 // these everywhere instead of hand-rolled input/button/select markup so every
@@ -13,9 +14,9 @@ export function Button({
   variant?: 'default' | 'primary' | 'ghost'
 }): JSX.Element {
   return (
-    <button className={`ui-btn ui-btn-${variant} ${className}`} {...rest}>
+    <UiButton variant={variant} className={className} {...rest}>
       {children}
-    </button>
+    </UiButton>
   )
 }
 
