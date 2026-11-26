@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { TriangleAlert } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface Props {
   children: ReactNode
@@ -31,9 +32,9 @@ export default class ErrorBoundary extends Component<Props, State> {
               {this.props.label ? ` (${this.props.label})` : ''}.
             </p>
             <pre>{this.state.error.message}</pre>
-            <button className="btn-small" onClick={() => this.setState({ error: null })}>
+            <Button size="sm" onClick={() => this.setState({ error: null })}>
               다시 시도
-            </button>
+            </Button>
           </div>
         </div>
       )

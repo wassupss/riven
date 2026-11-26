@@ -3,6 +3,7 @@ import { useUI } from '../state/ui'
 import { launchAgent } from '../dock/registry'
 import { contextBus } from '../bridge/contextBus'
 import { useT } from '../i18n'
+import { Button } from '@/components/ui/button'
 
 interface Cli {
   name: string
@@ -64,9 +65,9 @@ export default function AgentPicker(): JSX.Element | null {
           ))}
         </div>
         <div className="agent-picker-foot">
-          <button className="btn-small" onClick={cancel}>
+          <Button size="sm" onClick={cancel}>
             {t('common.cancel')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

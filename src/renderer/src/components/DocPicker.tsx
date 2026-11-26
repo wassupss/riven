@@ -6,6 +6,7 @@ import { FileIcon } from './FileIcon'
 import { score } from '../lib/fuzzy'
 import { isDocFile } from '../lib/mediaKind'
 import { useT } from '../i18n'
+import { Button } from '@/components/ui/button'
 
 // Picks document files out of a workspace. Used by the notes panel to pull a
 // repo's existing markdown/text into notes, so a design doc written in the tree
@@ -135,12 +136,12 @@ export default function DocPicker({
         </div>
         <div className="palette-foot">
           <span>{t('notes.importCount', { n: checked.size })}</span>
-          <button className="btn-small" onClick={onCancel}>
+          <Button size="sm" onClick={onCancel}>
             {t('common.cancel')}
-          </button>
-          <button className="btn-small primary" onClick={confirm} disabled={items.length === 0}>
+          </Button>
+          <Button size="sm" variant="primary" onClick={confirm} disabled={items.length === 0}>
             {t('notes.importAction')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,

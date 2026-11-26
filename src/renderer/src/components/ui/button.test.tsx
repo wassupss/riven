@@ -32,4 +32,14 @@ describe('Button', () => {
     expect(html).toContain('>Save</button>')
     expect(html).not.toContain('ui-btn')
   })
+
+  it('size sm is the old btn-small chip: smaller, and its primary fill is the accent', () => {
+    const sm = buttonVariants({ size: 'sm', variant: 'primary' })
+    expect(sm).toContain('font-semibold')
+    expect(sm).toContain('bg-[var(--accent)]')
+    expect(sm).toContain('h-auto')
+    // the compound colours come last, so they win over the base's control height
+    expect(sm.indexOf('h-auto')).toBeLessThan(sm.lastIndexOf('bg-[var(--accent)]'))
+    expect(buttonVariants({ size: 'sm' })).toContain('bg-[var(--hover)]')
+  })
 })

@@ -8,6 +8,7 @@ import { scheduleBackgroundGc } from '../lib/panelBackground'
 import type { Host } from '../lib/hostWindow'
 import { Segmented } from '../components/ui/Controls'
 import PanelBgEditor, { BgThumb } from '../components/PanelBgEditor'
+import { Button } from '@/components/ui/button'
 
 // Tab menu > 배경 설정: one panel's own background. Kind default (absent in the
 // pane state), none ('none'), or its own (a PanelBg), saved with the pane in
@@ -84,9 +85,9 @@ export default function PanelBgDialog({
       <div className="modal pbg-modal" role="dialog" aria-label={t('bg.dialogTitle', { name: title })}>
         <div className="modal-header">
           <span className="pbg-modal-title">{t('bg.dialogTitle', { name: title })}</span>
-          <button type="button" className="btn-small" onClick={onClose}>
+          <Button type="button" size="sm" onClick={onClose}>
             {t('common.close')}
-          </button>
+          </Button>
         </div>
         <div className="modal-body pbg-modal-body">
           <div className="set-row">

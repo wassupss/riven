@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useHost } from '../lib/hostWindow'
 import { useT } from '../i18n'
+import { Button } from '@/components/ui/button'
 
 export default function InputModal({
   title,
@@ -50,12 +51,12 @@ export default function InputModal({
             }}
           />
           <div className="input-modal-actions">
-            <button className="btn-small" onClick={onCancel}>
+            <Button size="sm" onClick={onCancel}>
               {t('common.cancel')}
-            </button>
-            <button className="btn-small primary" onClick={submit}>
+            </Button>
+            <Button size="sm" variant="primary" onClick={submit}>
               {t('common.confirm')}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

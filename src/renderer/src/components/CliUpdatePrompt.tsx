@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CliUpdateState } from '../../../preload/index'
 import { useT } from '../i18n'
+import { Button } from '@/components/ui/button'
 
 // Asked once an update of a CLI finishes while agents on it are open: apply the
 // new build to them now, or leave them be.
@@ -52,12 +53,12 @@ export default function CliUpdatePrompt(): JSX.Element | null {
           <p className="cli-update-q">{t('cliUpdate.question', { n: String(ask.open) })}</p>
           <p className="set-note">{t('cliUpdate.how')}</p>
           <div className="input-modal-actions">
-            <button className="btn-small" onClick={later} disabled={busy}>
+            <Button size="sm" onClick={later} disabled={busy}>
               {t('cliUpdate.later')}
-            </button>
-            <button className="btn-small primary" onClick={() => void apply()} disabled={busy}>
+            </Button>
+            <Button size="sm" variant="primary" onClick={() => void apply()} disabled={busy}>
               {busy ? t('cliUpdate.applying') : t('cliUpdate.apply')}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

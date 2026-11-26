@@ -5,6 +5,7 @@ import * as monaco from 'monaco-editor'
 import { languageForPath } from '../editor/EditorPane'
 import { editorTheme } from '../editor/highlight'
 import { useT } from '../i18n'
+import { Button } from '@/components/ui/button'
 
 export default function DiffModal({
   path,
@@ -46,9 +47,9 @@ export default function DiffModal({
       <div className="modal diff-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <span>{t('diff.title', { name: path.split('/').pop() ?? '' })}</span>
-          <button className="btn-small" onClick={onClose}>
+          <Button size="sm" onClick={onClose}>
             {t('common.close')}
-          </button>
+          </Button>
         </div>
         <div className="diff-body" ref={ref} />
       </div>
