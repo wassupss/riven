@@ -19,6 +19,12 @@ pub async fn git_repos(folder: String) -> Value {
   repo::repos(&folder).await
 }
 
+/// A new worktree on `branch` at `path`, with the .worktreeinclude files copied in.
+#[tauri::command]
+pub async fn git_worktree_create(folder: String, branch: String, path: String, base: Option<String>) -> Value {
+  crate::services::git::worktree::create(&folder, &branch, &path, base.as_deref()).await
+}
+
 #[tauri::command]
 pub async fn git_log(folder: String, limit: Option<Value>) -> Value {
   repo::log(&folder, limit.as_ref()).await

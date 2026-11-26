@@ -12,6 +12,7 @@
 
 pub mod github;
 pub mod repo;
+pub mod worktree;
 
 use crate::services::util::sigterm;
 use std::process::Stdio;

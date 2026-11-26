@@ -243,6 +243,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     git::git_info,
     git::git_repos,
     git::git_log,
+    git::git_worktree_create,
     git::git_show_file,
     git::git_blame,
     git::git_status,
