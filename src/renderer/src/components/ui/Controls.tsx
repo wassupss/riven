@@ -1,9 +1,14 @@
 import type { ReactNode, SelectHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes, ButtonHTMLAttributes } from 'react'
 import { Button as UiButton } from './button'
+import { Input } from './input'
+import { Textarea } from './textarea'
+import { Switch as UiSwitch } from './switch'
+import { Segmented as UiSegmented } from './segmented'
 
 // Shared form controls with ONE consistent look + height (var(--ctl-h)). Use
 // these everywhere instead of hand-rolled input/button/select markup so every
-// row lines up. Height, radius, border, focus ring all come from styles.css.
+// row lines up. Height, radius, border, focus ring come from the shadcn-style
+// components in this folder (and their tokens in styles.css).
 
 export function Button({
   variant = 'default',
@@ -20,27 +25,20 @@ export function Button({
   )
 }
 
-export function TextInput({
-  className = '',
-  ...rest
-}: InputHTMLAttributes<HTMLInputElement>): JSX.Element {
-  return <input className={`ui-input ${className}`} {...rest} />
+export function TextInput(props: InputHTMLAttributes<HTMLInputElement>): JSX.Element {
+  return <Input {...props} />
 }
 
-export function NumberInput({
-  className = '',
-  ...rest
-}: InputHTMLAttributes<HTMLInputElement>): JSX.Element {
-  return <input type="number" className={`ui-input ui-input-num ${className}`} {...rest} />
+export function NumberInput(props: InputHTMLAttributes<HTMLInputElement>): JSX.Element {
+  return <Input type="number" variant="num" {...props} />
 }
 
-export function TextArea({
-  className = '',
-  ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement>): JSX.Element {
-  return <textarea className={`ui-textarea ${className}`} {...rest} />
+export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>): JSX.Element {
+  return <Textarea {...props} />
 }
 
+// Still the shared .ui-select look: its arrow and the .ui-fontfield width rule
+// are styled by class in styles.css, so the class stays until those move too.
 export function Select({
   className = '',
   children,
@@ -54,13 +52,7 @@ export function Select({
 }
 
 // A pill toggle switch. Use this for every on/off setting (no bare checkboxes).
-export function Switch({
-  checked,
-  onChange,
-  disabled,
-  label,
-  title
-}: {
+export function Switch(props: {
   checked: boolean
   onChange: (v: boolean) => void
   disabled?: boolean
@@ -68,44 +60,14 @@ export function Switch({
   label?: string
   title?: string
 }): JSX.Element {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      title={title}
-      disabled={disabled}
-      className={`ui-switch${checked ? ' on' : ''}`}
-      onClick={() => onChange(!checked)}
-    >
-      <span className="ui-switch-knob" />
-    </button>
-  )
+  return <UiSwitch {...props} />
 }
 
 // Segmented control: a row of mutually-exclusive options.
-export function Segmented<T extends string>({
-  value,
-  options,
-  onChange
-}: {
+export function Segmented<T extends string>(props: {
   value: T
   options: Array<{ value: T; label: ReactNode }>
   onChange: (v: T) => void
 }): JSX.Element {
-  return (
-    <div className="ui-seg">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          className={`ui-seg-btn${value === o.value ? ' on' : ''}`}
-          onClick={() => onChange(o.value)}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  )
+  return <UiSegmented {...props} />
 }
