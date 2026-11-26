@@ -4,6 +4,7 @@ import { Input } from './input'
 import { Textarea } from './textarea'
 import { Switch as UiSwitch } from './switch'
 import { Segmented as UiSegmented } from './segmented'
+import { Select as UiSelect } from './select'
 
 // Shared form controls with ONE consistent look + height (var(--ctl-h)). Use
 // these everywhere instead of hand-rolled input/button/select markup so every
@@ -37,18 +38,8 @@ export function TextArea(props: TextareaHTMLAttributes<HTMLTextAreaElement>): JS
   return <Textarea {...props} />
 }
 
-// Still the shared .ui-select look: its arrow and the .ui-fontfield width rule
-// are styled by class in styles.css, so the class stays until those move too.
-export function Select({
-  className = '',
-  children,
-  ...rest
-}: SelectHTMLAttributes<HTMLSelectElement>): JSX.Element {
-  return (
-    <select className={`ui-select ${className}`} {...rest}>
-      {children}
-    </select>
-  )
+export function Select(props: SelectHTMLAttributes<HTMLSelectElement>): JSX.Element {
+  return <UiSelect {...props} />
 }
 
 // A pill toggle switch. Use this for every on/off setting (no bare checkboxes).
