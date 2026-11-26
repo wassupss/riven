@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useUpdate } from '../state/update'
 import { useT } from '../i18n'
 import logoUrl from '../assets/riven-mark.svg'
+import { Button } from '@/components/ui/button'
 
 // Settings → About: brand mark, version, and the update flow (check / progress /
 // "restart to install") so updates are visible somewhere other than a toast.
@@ -62,13 +63,13 @@ export default function AboutTab(): JSX.Element {
 
       <div className="about-update">
         {status.state === 'downloaded' ? (
-          <button className="btn-small about-install" onClick={install}>
+          <Button size="sm" className="about-install" onClick={install}>
             {t('about.install')}
-          </button>
+          </Button>
         ) : (
-          <button className="btn-small" onClick={check} disabled={busy}>
+          <Button size="sm" onClick={check} disabled={busy}>
             {t('about.check')}
-          </button>
+          </Button>
         )}
         {line && (
           <span className={`about-status${status.state === 'error' ? ' err' : ''}`}>{line}</span>

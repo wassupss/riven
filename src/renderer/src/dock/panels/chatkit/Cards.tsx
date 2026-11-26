@@ -5,6 +5,7 @@ import { useUI } from '../../../state/ui'
 import { addTerminal } from '../../registry'
 import { promptInput } from '../../../components/promptInput'
 import { scrollWithin } from '../../../lib/scrollWithin'
+import { Button } from '@/components/ui/button'
 
 // Inline cards a chat answers a riven command with (/mcp, /model), drawn in
 // the transcript and keyboard-navigable. Shared by the chat panes.
@@ -296,37 +297,39 @@ export function McpCard({
                   <Loader2 size={12} className="spin" />
                 </span>
               ) : s.status === 'connected' ? (
-                <button className="btn-small" onClick={() => void logout(s.name)}>
+                <Button size="sm" onClick={() => void logout(s.name)}>
                   {t('chat.mcpLogout')}
-                </button>
+                </Button>
               ) : s.status === 'pending' ? (
-                <button className="btn-small" onClick={() => void approve(s.name)}>
+                <Button size="sm" onClick={() => void approve(s.name)}>
                   {t('chat.mcpApprove')}
-                </button>
+                </Button>
               ) : (
-                <button className="btn-small" onClick={() => void login(s.name)}>
+                <Button size="sm" onClick={() => void login(s.name)}>
                   {t('chat.mcpLoginBtn')}
-                </button>
+                </Button>
               )}
             </div>
           </div>
         ))
       )}
       <div className="mcp-actions">
-        <button
-          className={`btn-small${servers && index === list.length ? ' active' : ''}`}
+        <Button
+          size="sm"
+          className={servers && index === list.length ? 'active' : undefined}
           onMouseMove={() => setIndex(list.length)}
           onClick={() => useUI.getState().openSettings('ai')}
         >
           {t('chat.mcpRivenTools')}
-        </button>
-        <button
-          className={`btn-small${servers && index === list.length + 1 ? ' active' : ''}`}
+        </Button>
+        <Button
+          size="sm"
+          className={servers && index === list.length + 1 ? 'active' : undefined}
           onMouseMove={() => setIndex(list.length + 1)}
           onClick={() => void add()}
         >
           {t('chat.mcpAdd')}
-        </button>
+        </Button>
       </div>
       <div className={error ? 'set-note mcp-error' : 'set-note'}>
         {error || t('chat.mcpAuthNote')}

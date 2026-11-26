@@ -22,6 +22,7 @@ import { mediaKind, isMarkdown, isTextEditable } from '../../lib/mediaKind'
 import { hostFor, type Host } from '../../lib/hostWindow'
 import '../../styles/editor-bottom.css'
 import '../../styles/media.css'
+import { Button } from '@/components/ui/button'
 
 const EditorPane: EditorPaneComponent = MonacoEditorPane
 
@@ -371,16 +372,16 @@ function EditorGroupView({
             <Bot size={14} /> {t('editor.conflictBanner')}
           </span>
           <span className="agent-banner-actions">
-            <button className="btn-small" onClick={reloadFromDisk}>
+            <Button size="sm" onClick={reloadFromDisk}>
               {t('editor.loadDisk')}
-            </button>
-            <button
-              className="btn-small"
+            </Button>
+            <Button
+              size="sm"
               title={t('common.close')}
               onClick={() => activePath && clearEdit(activePath)}
             >
               <X size={12} />
-            </button>
+            </Button>
           </span>
         </div>
       )}
@@ -390,12 +391,12 @@ function EditorGroupView({
             <Bot size={14} /> {t('editor.agentEditedFull')}
           </span>
           <span className="agent-banner-actions">
-            <button className="btn-small" onClick={revertAgentEdit}>
+            <Button size="sm" onClick={revertAgentEdit}>
               {t('editor.revert')}
-            </button>
-            <button className="btn-small" onClick={() => activePath && clearEdit(activePath)}>
+            </Button>
+            <Button size="sm" onClick={() => activePath && clearEdit(activePath)}>
               <X size={12} />
-            </button>
+            </Button>
           </span>
         </div>
       )}

@@ -16,6 +16,7 @@ import {
   ChevronRight,
   ChevronDown
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 type DetailResult = Awaited<ReturnType<typeof window.api.gh.detail>>
 type Detail = Extract<DetailResult, { ok: true }>['detail']
@@ -112,12 +113,12 @@ function Thread({
               onChange={(e) => setReply(e.target.value)}
             />
             <div className="pr-reply-actions">
-              <button className="btn-small" disabled={busy || !reply.trim()} onClick={() => void send()}>
+              <Button size="sm" disabled={busy || !reply.trim()} onClick={() => void send()}>
                 {t('pr.reply')}
-              </button>
-              <button className="btn-small" disabled={busy} onClick={() => void toggleResolved()}>
+              </Button>
+              <Button size="sm" disabled={busy} onClick={() => void toggleResolved()}>
                 {thread.isResolved ? t('pr.unresolve') : t('pr.resolve')}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -223,12 +224,12 @@ function FileDiff({
                   onChange={(e) => setText(e.target.value)}
                 />
                 <div className="pr-reply-actions">
-                  <button className="btn-small" disabled={!text.trim()} onClick={addDraft}>
+                  <Button size="sm" disabled={!text.trim()} onClick={addDraft}>
                     {t('pr.addComment')}
-                  </button>
-                  <button className="btn-small" onClick={() => setComposing(null)}>
+                  </Button>
+                  <Button size="sm" onClick={() => setComposing(null)}>
                     {t('common.cancel')}
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -530,30 +531,30 @@ export default function PrReview({
               {drafts.length > 0 && (
                 <span className="pr-submit-count">{t('pr.pendingComments', { n: drafts.length })}</span>
               )}
-              <button
-                className="btn-small"
+              <Button
+                size="sm"
                 disabled={submitting}
                 onClick={() => void submit('COMMENT')}
                 title={t('pr.comment')}
               >
                 {t('pr.comment')}
-              </button>
-              <button
-                className="btn-small"
+              </Button>
+              <Button
+                size="sm"
                 disabled={submitting}
                 onClick={() => void submit('REQUEST_CHANGES')}
                 title={t('pr.requestChanges')}
               >
                 {t('pr.requestChanges')}
-              </button>
-              <button
-                className="btn-small primary"
+              </Button>
+              <Button
+                size="sm" variant="primary"
                 disabled={submitting}
                 onClick={() => void submit('APPROVE')}
                 title={t('pr.approve')}
               >
                 {t('pr.approve')}
-              </button>
+              </Button>
             </div>
           </div>
         </>

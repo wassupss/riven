@@ -5,6 +5,7 @@ import { useT } from '../../i18n'
 import { highlightCode } from '../../components/highlight'
 import { promptInput } from '../../components/promptInput'
 import { storeGet, storeSet, type StoreName } from '../../lib/fileStore'
+import { Button } from '@/components/ui/button'
 
 // =============================================================================
 // APIClientPanel — a Postman-like HTTP client.
@@ -550,9 +551,9 @@ export default function ApiClientPanel(): JSX.Element {
             )}
             {history.length > 0 && (
               <div className="apc-side-actions">
-                <button className="btn-small" onClick={() => setHistory([])}>
+                <Button size="sm" onClick={() => setHistory([])}>
                   {t('api.clear', 'Clear')}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -606,9 +607,9 @@ export default function ApiClientPanel(): JSX.Element {
               </div>
             )}
             <div className="apc-side-actions">
-              <button className="btn-small primary" onClick={saveCurrent}>
+              <Button size="sm" variant="primary" onClick={saveCurrent}>
                 {t('api.saveCurrent', 'Save current')}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -660,13 +661,13 @@ export default function ApiClientPanel(): JSX.Element {
               if (e.key === 'Enter') void send()
             }}
           />
-          <button
-            className="btn-small primary apc-send"
+          <Button
+            size="sm" variant="primary" className="apc-send"
             disabled={sending || !url.trim()}
             onClick={() => void send()}
           >
             {sending ? t('api.sending') : t('api.send')}
-          </button>
+          </Button>
         </div>
 
         {/* request builder tabs */}
@@ -735,9 +736,9 @@ export default function ApiClientPanel(): JSX.Element {
               {bodyType === 'json' && (
                 <>
                   <div className="apc-row-actions">
-                    <button className="btn-small apc-mini" onClick={formatJson}>
+                    <Button size="sm" className="apc-mini" onClick={formatJson}>
                       {t('api.formatJson', 'Format / validate')}
-                    </button>
+                    </Button>
                     {jsonMsg && (
                       <span className={jsonMsg.ok ? 'apc-json-ok' : 'apc-json-err'}>
                         {jsonMsg.text}

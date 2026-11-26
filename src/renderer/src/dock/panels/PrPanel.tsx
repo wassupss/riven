@@ -14,6 +14,7 @@ import {
   Plus,
   CornerDownRight
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 type PrList = Awaited<ReturnType<typeof window.api.gh.prs>>
 type Pr = PrList['prs'][number]
@@ -273,19 +274,19 @@ function CreateForm({
       {error && <div className="pr-create-error">{error}</div>}
       <div className="pr-reply-actions">
         {needsPush && branch && (
-          <button className="btn-small" disabled={busy} onClick={() => void push()}>
+          <Button size="sm" disabled={busy} onClick={() => void push()}>
             {t('pr.pushBranch', { branch })}
-          </button>
+          </Button>
         )}
-        <button className="btn-small primary" disabled={busy || !title.trim()} onClick={() => void create()}>
+        <Button size="sm" variant="primary" disabled={busy || !title.trim()} onClick={() => void create()}>
           {t('pr.create')}
-        </button>
-        <button className="btn-small" disabled={busy} onClick={onCancel}>
+        </Button>
+        <Button size="sm" disabled={busy} onClick={onCancel}>
           {t('common.cancel')}
-        </button>
-        <button className="btn-small" disabled={busy} onClick={() => void window.api.gh.createWeb(repo)}>
+        </Button>
+        <Button size="sm" disabled={busy} onClick={() => void window.api.gh.createWeb(repo)}>
           {t('pr.createWeb')}
-        </button>
+        </Button>
       </div>
     </div>
   )

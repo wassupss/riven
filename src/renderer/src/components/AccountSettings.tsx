@@ -321,16 +321,16 @@ export default function AccountSettings(): JSX.Element {
             <div className="account-name">{name}</div>
             {user.email && <div className="account-email">{user.email}</div>}
           </div>
-          <button className="btn-small" onClick={() => void signOut()}>
+          <Button size="sm" onClick={() => void signOut()}>
             {t('settings.account.signOut')}
-          </button>
+          </Button>
         </div>
 
         <div className="set-row account-sync-row">
           <span className={`account-sync-status account-sync-${syncStatus}`}>{syncLabel}</span>
-          <button className="btn-small" onClick={() => void syncNow()} disabled={syncStatus === 'syncing'}>
+          <Button size="sm" onClick={() => void syncNow()} disabled={syncStatus === 'syncing'}>
             {t('settings.account.syncNow')}
-          </button>
+          </Button>
         </div>
         <div className="set-note">{t('settings.account.syncNote')}</div>
         {error && <div className="set-note account-error">{error}</div>}

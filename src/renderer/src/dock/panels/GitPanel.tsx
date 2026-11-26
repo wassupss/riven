@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Check
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 interface GitFile {
   path: string
@@ -349,9 +350,9 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
           value={message}
           onChange={(e) => setMessage(e.target.value)}
         />
-        <button className="btn-small primary" disabled={committing || !message.trim() || staged.length === 0} onClick={commit}>
+        <Button size="sm" variant="primary" disabled={committing || !message.trim() || staged.length === 0} onClick={commit}>
           {t('git.commit', { n: staged.length })}
-        </button>
+        </Button>
       </div>
 
       <div className="git-scroll">

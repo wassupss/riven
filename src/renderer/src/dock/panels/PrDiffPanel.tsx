@@ -5,6 +5,7 @@ import { editorTheme } from '../../editor/highlight'
 import { usePrReview, prKey, draftsFor, threadsFor, threadsOnLine } from '../../state/prReview'
 import { useT } from '../../i18n'
 import { MessageSquarePlus, X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 export interface PrDiffParams {
   repo: string
@@ -206,9 +207,9 @@ export default function PrDiffPanel({ params }: { params: PrDiffParams }): JSX.E
                 }}
               />
               <div className="pr-reply-actions">
-                <button className="btn-small primary" disabled={!body.trim()} onClick={save}>
+                <Button size="sm" variant="primary" disabled={!body.trim()} onClick={save}>
                   {t('pr.addComment')}
-                </button>
+                </Button>
                 <span className="pr-diff-hint">{t('pr.submitHint')}</span>
               </div>
             </div>

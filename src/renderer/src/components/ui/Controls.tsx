@@ -13,14 +13,17 @@ import { Select as UiSelect } from './select'
 
 export function Button({
   variant = 'default',
+  size = 'default',
   className = '',
   children,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'default' | 'primary' | 'ghost'
+  /** sm is the old btn-small chip. */
+  size?: 'default' | 'sm'
 }): JSX.Element {
   return (
-    <UiButton variant={variant} className={className} {...rest}>
+    <UiButton variant={variant} size={size} className={className} {...rest}>
       {children}
     </UiButton>
   )
