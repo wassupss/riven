@@ -1,5 +1,5 @@
 import { useSession } from '../../state/session'
-import { isPageHidden } from '../../lib/windowVisibility'
+import { isWindowHiddenByMain } from '../../lib/windowVisibility'
 import '../../styles/browser-bookmarks.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DockviewPanelApi } from 'dockview-core'
@@ -208,8 +208,8 @@ export default function PreviewPanel({
     const sane = placeable(r, { width: hostWin.innerWidth, height: hostWin.innerHeight })
     // Only a panel that IS on screen gets the benefit of the doubt on a bad
     // measurement (a transient 0×0 during layout must not make the page blink).
-    if (onScreen && panelVisible && !sane && !isPageHidden()) return
-    const visible = onScreen && panelVisible && sane && !isPageHidden()
+    if (onScreen && panelVisible && !sane && !isWindowHiddenByMain()) return
+    const visible = onScreen && panelVisible && sane && !isWindowHiddenByMain()
     const id = activeTabId(workspace)
     const tab = activeTab(workspace)
     // Hide all views on the blank start page (no view for this tab).
@@ -260,7 +260,7 @@ export default function PreviewPanel({
     let timer: ReturnType<typeof setTimeout> | null = null
     const tick = (): void => {
       syncBounds()
-      const shown = !!viewportRef.current?.offsetParent && !isPageHidden()
+      const shown = !!viewportRef.current?.offsetParent && !isWindowHiddenByMain()
       timer = setTimeout(tick, shown ? 250 : 2000)
     }
     timer = setTimeout(tick, 250)

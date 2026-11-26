@@ -464,7 +464,9 @@ fn wait(id: &str, page: Option<String>, parent: Option<String>, call: &Call, tim
 fn page_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, parent: Option<String>, call: &Call) -> Option<String> {
   let Some(app) = APP.get() else { return Some(NO_WINDOW.into()) };
   let label = calls().page.clone();
-  let Some(label) = label.filter(|l| app.webview_windows().contains_key(l)) else { return Some(NO_WINDOW.into()) };
+  // get_window, the lookup that opens riven's windows (lifecycle.rs):
+  // webview_windows() does not list the app window here.
+  let Some(label) = label.filter(|l| app.get_window(l).is_some()) else { return Some(NO_WINDOW.into()) };
   let id = util::uuid();
   let msg = json!({ "id": id, "tool": name, "args": args, "cwd": cwd, "key": key });
   let l2 = label.clone();

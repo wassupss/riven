@@ -15,6 +15,16 @@ export function isPageHidden(): boolean {
   return hiddenByMain || document.visibilityState === 'hidden'
 }
 
+/**
+ * Only main's word on minimise/hide, without WebKit's visibilityState. WebKit
+ * reported 'hidden' for a window that was on screen, and a native page view
+ * that trusted that stayed hidden until the window was switched away from and
+ * back. The browser panel decides its view with this.
+ */
+export function isWindowHiddenByMain(): boolean {
+  return hiddenByMain
+}
+
 if (typeof window !== 'undefined' && window.api?.win) {
   window.api.win.onVisibility(({ hidden }) => {
     if (hidden === hiddenByMain) return

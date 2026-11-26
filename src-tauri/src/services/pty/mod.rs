@@ -905,8 +905,11 @@ fn agent_re() -> &'static regex::Regex {
   })
 }
 
-// The name of the agent running as the shell's foreground child, or None.
-async fn agent_running(pid: u32) -> Option<String> {
+// The name of the agent running as the shell's foreground child. Outer None:
+// the probe itself did not finish (a timeout under load, a failed ps). The
+// caller keeps its last answer then; reading that as "no agent" made the
+// terminal's row in the workspace bar blink on and off while the CLI ran.
+async fn agent_running(pid: u32) -> Option<Option<String>> {
   let run = |prog: &'static str, args: Vec<String>| async move {
     let out = tokio::time::timeout(
       Duration::from_millis(1500),
@@ -920,12 +923,12 @@ async fn agent_running(pid: u32) -> Option<String> {
   let kids = run("/usr/bin/pgrep", vec!["-P".into(), pid.to_string()]).await?;
   let kids: Vec<&str> = kids.split('\n').filter(|l| !l.is_empty()).collect();
   if kids.is_empty() {
-    return None;
+    return Some(None);
   }
   let args = run("/bin/ps", vec!["-o".into(), "args=".into(), "-p".into(), kids.join(",")]).await?;
-  let c = agent_re().captures(&args)?;
+  let Some(c) = agent_re().captures(&args) else { return Some(None) };
   // The path-based branch (no capture group) is claude.
-  Some(c.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "claude".into()))
+  Some(Some(c.get(1).map(|m| m.as_str().to_string()).unwrap_or_else(|| "claude".into())))
 }
 
 // Whether an agent is the foreground child (tab title, context routing, and
@@ -941,9 +944,11 @@ async fn probe_loop(s: Arc<Session>) {
       if st.polling || s.pid == 0 {
         continue;
       }
-      // No agent and a silent terminal: skip the probe. An agent can only
-      // appear after output flows, which refreshes last_data.
-      if !st.agent_present && st.last_data.elapsed() > IDLE_POLL {
+      // No agent and a silent terminal: probe only every IDLE_POLL. Skipping
+      // altogether left a CLI that was still starting at the first look (or
+      // that went quiet at its prompt) unseen until the next byte of output,
+      // so its row came and went with the terminal's chatter.
+      if !st.agent_present && st.last_data.elapsed() > IDLE_POLL && st.last_probe.is_some_and(|t| t.elapsed() < IDLE_POLL) {
         continue;
       }
       // A hook-reporting agent tells us when it works and stops; the probe
@@ -954,12 +959,14 @@ async fn probe_loop(s: Arc<Session>) {
       st.last_probe = Some(Instant::now());
       st.polling = true;
     }
-    let name = agent_running(s.pid).await;
+    let probed = agent_running(s.pid).await;
     let mut st = lock(&s);
     st.polling = false;
     if st.dead {
       return;
     }
+    // The probe could not finish: say nothing new, and look again next tick.
+    let Some(name) = probed else { continue };
     let was = st.agent_present;
     let was_name = st.agent_name.clone();
     st.agent_present = name.is_some();
