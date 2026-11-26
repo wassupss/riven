@@ -590,7 +590,12 @@ mod rt {
 
   fn native(cmd: &str, a: Value) -> Result<Value, String> {
     let app = app().ok_or("no app")?;
-    crate::browser::dispatch(app, cmd, &a)
+    let r = crate::browser::dispatch(app, cmd, &a);
+    // The callers drop these results; a failed view call is logged here.
+    if let Err(e) = &r {
+      eprintln!("[browser] {cmd} failed: {e}");
+    }
+    r
   }
 
   /// riven's own window: the first app window still open (appWindow()).
@@ -970,8 +975,22 @@ mod rt {
       s.by_label.remove(&label);
       return;
     }
+    // The panel's sync can arrive before this view exists: show and place then
+    // fail, and the panel does not repeat an unchanged frame. So forget what
+    // was sent for this tab and send each panel's newest sync again.
+    if let Some(t) = state().lock().unwrap().tabs.get_mut(id) {
+      t.sent.clear();
+    }
+    replay_syncs();
     if !url.is_empty() {
       navigate(id, url);
+    }
+  }
+
+  fn replay_syncs() {
+    let replay: Vec<(String, Value)> = state().lock().unwrap().last_sync.values().cloned().collect();
+    for (sender, a) in replay {
+      sync(&sender, &a);
     }
   }
 
