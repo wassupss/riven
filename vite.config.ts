@@ -4,6 +4,7 @@
 import { resolve } from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { dockviewFilePopout } from './vite/dockviewFilePopout'
 import { dockviewSubpixelOverflow } from './vite/dockviewSubpixelOverflow'
 
@@ -20,7 +21,7 @@ export default defineConfig({
   // dockviewFilePopout: see the file. Without it ⌘⇧O does nothing in the packaged
   // app, which loads its renderer from file://.
   // dockviewSubpixelOverflow: no false tab overflow dropdown under WebKit rounding.
-  plugins: [react(), dockviewFilePopout(), dockviewSubpixelOverflow()],
+  plugins: [react(), tailwindcss(), dockviewFilePopout(), dockviewSubpixelOverflow()],
   build: {
     outDir: resolve('out-tauri/renderer'),
     emptyOutDir: true,

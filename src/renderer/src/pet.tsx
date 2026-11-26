@@ -5,6 +5,7 @@ import { AssistantCard } from './components/PetChatDialog'
 import { loadSettings, getSettings } from './state/settings'
 import { applyTheme } from './state/themes'
 import { installNoNativeMenu } from './lib/noNativeMenu'
+import './shadcn.css'
 import './styles.css'
 
 // ---------------------------------------------------------------------------

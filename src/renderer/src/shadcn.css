@@ -1,0 +1,40 @@
+/*
+ * Tailwind + shadcn/ui foundation.
+ *
+ * No preflight: the reset would restyle every element riven already styles in
+ * styles.css. Utilities live in a layer, and styles.css is unlayered, so any
+ * rule riven already has wins over a utility; a utility only fills what riven
+ * left unset.
+ *
+ * The shadcn token names (bg-background, text-muted-foreground, border-input…)
+ * point at riven's own variables, so the themes (state/themes.ts rewrites
+ * --bg, --fg, --accent… at run time) recolour shadcn components too.
+ */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--bg-2);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--bg-2);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--bg-3);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--bg-3);
+  --color-muted-foreground: var(--fg-dim);
+  --color-accent: var(--hover-strong);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--on-accent);
+  --color-border: var(--edge);
+  --color-input: var(--edge);
+  --color-ring: var(--accent-border);
+
+  /* --radius-sm/md/lg/xl and --font-mono already exist under these names in
+     styles.css, so rounded-* picks them up without a mapping here. */
+  --font-sans: var(--font-ui);
+}

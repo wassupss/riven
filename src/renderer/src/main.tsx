@@ -8,6 +8,7 @@ import { initOutputCapture } from './state/outputLog'
 import { installDialogRouting } from './lib/hostWindow'
 import { installNoNativeMenu } from './lib/noNativeMenu'
 import { hydrateFileStore } from './lib/fileStore'
+import './shadcn.css'
 import './styles.css'
 
 // Start capturing language-server logs into the Output panel from launch.
