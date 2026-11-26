@@ -27,15 +27,16 @@ use objc2_foundation::{
 };
 use objc2_web_kit::{
   WKContentWorld, WKNavigation, WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler,
-  WKSnapshotConfiguration, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView,
+  WKSnapshotConfiguration, WKUIDelegate, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
-use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent, WebviewBuilder};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Wry};
+use tauri::webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse, PageLoadEvent, WebviewBuilder};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
 
 const WORLD: &str = "riven-browser";
 const HANDLER: &str = "rivenBrowser";
@@ -387,6 +388,84 @@ fn safari_ua() -> String {
   .clone()
 }
 
+// ---- sign-in popups ------------------------------------------------------------
+//
+// A popup is a WebviewWindow built on the opener's configuration (its process
+// pool and cookies), so window.opener and postMessage reach the page that
+// opened it. WebKit tells the UI delegate to close it when the page calls
+// window.close(); wry does not handle that, so a proxy delegate (like NavProxy)
+// answers webViewDidClose and hands every other UI message to wry's delegate.
+
+static POPUPS: AtomicU64 = AtomicU64::new(0);
+
+struct PopupIvars {
+  app: AppHandle,
+  label: String,
+  inner: Option<Retained<ProtocolObject<dyn WKUIDelegate>>>,
+}
+
+define_class!(
+  #[unsafe(super(NSObject))]
+  #[thread_kind = MainThreadOnly]
+  #[name = "RivenPopupUI"]
+  #[ivars = PopupIvars]
+  struct PopupUI;
+
+  impl PopupUI {
+    #[unsafe(method(respondsToSelector:))]
+    fn responds_to(&self, sel: Sel) -> bool {
+      let mine: bool = unsafe { msg_send![super(self), respondsToSelector: sel] };
+      mine || self.ivars().inner.as_ref().is_some_and(|i| unsafe { msg_send![&**i, respondsToSelector: sel] })
+    }
+
+    #[unsafe(method(forwardingTargetForSelector:))]
+    fn forwarding_target(&self, _sel: Sel) -> *mut AnyObject {
+      match &self.ivars().inner {
+        Some(i) => Retained::as_ptr(i) as *mut AnyObject,
+        None => std::ptr::null_mut(),
+      }
+    }
+  }
+
+  unsafe impl NSObjectProtocol for PopupUI {}
+
+  unsafe impl WKUIDelegate for PopupUI {
+    #[unsafe(method(webViewDidClose:))]
+    fn did_close(&self, _wv: &WKWebView) {
+      let iv = self.ivars();
+      if let Some(w) = iv.app.get_webview_window(&iv.label) {
+        let _ = w.close();
+      }
+    }
+  }
+);
+
+thread_local! {
+  // Main thread only, like PROXIES. A popup's delegate lives as long as its window.
+  static POPUP_UI: RefCell<HashMap<String, Retained<PopupUI>>> = RefCell::new(HashMap::new());
+}
+
+fn popup(app: &AppHandle, url: tauri::Url, features: NewWindowFeatures) -> Result<WebviewWindow<Wry>, String> {
+  let label = format!("riven-popup-{}", POPUPS.fetch_add(1, Ordering::Relaxed));
+  let w = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+    .user_agent(&safari_ua())
+    .window_features(features)
+    .build()
+    .map_err(|e| e.to_string())?;
+  let (ap, lb) = (app.clone(), label.clone());
+  w.with_webview(move |pv| unsafe {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let wk = wk(&pv);
+    let inner = wk.UIDelegate();
+    let proxy = PopupUI::alloc(mtm).set_ivars(PopupIvars { app: ap, label: lb.clone(), inner });
+    let proxy: Retained<PopupUI> = msg_send![super(proxy), init];
+    wk.setUIDelegate(Some(ProtocolObject::from_ref(&*proxy)));
+    POPUP_UI.with(|p| p.borrow_mut().insert(lb, proxy));
+  })
+  .map_err(|e| e.to_string())?;
+  Ok(w)
+}
+
 fn create(app: &AppHandle, a: &Value) -> Res {
   let label = s(a, "label").ok_or("no label")?.to_string();
   let host = app.get_window(s(a, "host").unwrap_or("")).ok_or("no host window")?;
@@ -399,6 +478,7 @@ fn create(app: &AppHandle, a: &Value) -> Res {
   let nav_label = label.clone();
   let win_label = label.clone();
   let dl_label = label.clone();
+  let popup_app = app.clone();
   let mut bld = WebviewBuilder::new(&label, blank)
     .user_agent(&safari_ua())
     .devtools(true)
@@ -413,9 +493,20 @@ fn create(app: &AppHandle, a: &Value) -> Res {
       report(&v, if p.event() == PageLoadEvent::Started { "commit" } else { "finish" });
     })
     .on_document_title_changed(|v, _t| report(&v, "title"))
-    // target=_blank / window.open: Electron's setWindowOpenHandler decides; the
-    // panel opens it as a tab. Never a window of its own.
-    .on_new_window(move |url, _features| {
+    // window.open with a size or position (a sign-in popup) is a real window
+    // that shares this view's configuration, so window.opener and the
+    // postMessage back to the page keep working. A plain target=_blank link
+    // opens as a tab in the panel, as before.
+    .on_new_window(move |url, features| {
+      if features.size().is_some() || features.position().is_some() {
+        return match popup(&popup_app, url, features) {
+          Ok(w) => NewWindowResponse::Create { window: w },
+          Err(e) => {
+            eprintln!("[browser] popup: {e}");
+            NewWindowResponse::Deny
+          }
+        };
+      }
       crate::services::browser::on_view(json!({ "ev": "bv", "label": win_label, "kind": "newwindow", "url": url.as_str() }));
       NewWindowResponse::Deny
     })

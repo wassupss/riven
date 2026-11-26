@@ -492,6 +492,8 @@ mod rt {
     // Pop-out key -> window label, and the newest browser:sync per panel.
     popouts: HashMap<String, String>,
     sync_seq: HashMap<String, u64>,
+    // The newest browser:sync per panel, replayed when the modal guard lifts.
+    last_sync: HashMap<String, (String, Value)>,
     polling: bool,
     // The open menu's actions, by item id.
     menu: HashMap<String, (String, Act)>,
@@ -1055,6 +1057,7 @@ mod rt {
       let mut s = state().lock().unwrap();
       let n = s.sync_seq.get(&panel).copied().unwrap_or(0) + 1;
       s.sync_seq.insert(panel.clone(), n);
+      s.last_sync.insert(panel.clone(), (sender.to_string(), a.clone()));
       n
     };
     let host = a.get("host").and_then(Value::as_str).filter(|h| !h.is_empty()).map(String::from);
@@ -1105,13 +1108,23 @@ mod rt {
     }
   }
 
+  // The renderer's modal guard. Lifting it only clears the flag: the panel does
+  // not re-send its rect, so the views would stay hidden until something else
+  // moved. Replay each panel's newest sync instead.
   pub fn hide_all(hidden: bool) {
-    let mut s = state().lock().unwrap();
-    s.hidden_all = hidden;
-    if hidden {
-      for t in s.tabs.values_mut() {
-        push(t, false, None);
+    let replay: Vec<(String, Value)> = {
+      let mut s = state().lock().unwrap();
+      s.hidden_all = hidden;
+      if hidden {
+        for t in s.tabs.values_mut() {
+          push(t, false, None);
+        }
+        return;
       }
+      s.last_sync.values().cloned().collect()
+    };
+    for (sender, a) in replay {
+      sync(&sender, &a);
     }
   }
 
