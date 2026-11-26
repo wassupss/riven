@@ -86,7 +86,9 @@ pub fn init(app: &AppHandle) {
 fn send(s: Value) {
   *latest().lock().unwrap() = s.clone();
   let Some(app) = APP.get() else { return };
-  for label in app.webview_windows().into_keys() {
+  // The app's windows, not webview_windows(): that list did not include riven's
+  // window here, so no status ever reached the page and About stayed on "checking".
+  for label in crate::lifecycle::main_windows(app) {
     if crate::commands::app_page(&label) {
       crate::commands::emit_ipc(app, &label, "update:status", json!([s]));
     }
