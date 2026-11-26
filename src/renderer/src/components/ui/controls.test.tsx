@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { NumberInput, Segmented, Switch, TextArea, TextInput } from './Controls'
+import { NumberInput, Segmented, Select, Switch, TextArea, TextInput } from './Controls'
 
 describe('shared controls', () => {
   it('text input keeps riven height, border and the accent focus ring', () => {
@@ -16,6 +16,18 @@ describe('shared controls', () => {
     expect(html).toContain('type="number"')
     expect(html).toContain('w-[84px]')
     expect(html).toContain('text-right')
+  })
+
+  it('select keeps the control height, the arrow hook and the accent focus', () => {
+    const html = renderToStaticMarkup(
+      <Select value="a" onChange={() => {}}>
+        <option value="a">A</option>
+      </Select>
+    )
+    expect(html).toContain('ui-select')
+    expect(html).toContain('h-[var(--ctl-h)]')
+    expect(html).toContain('appearance-none')
+    expect(html).toContain('pr-[26px]')
   })
 
   it('textarea keeps its minimum height and vertical resize', () => {
